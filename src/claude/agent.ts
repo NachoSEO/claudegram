@@ -1,5 +1,6 @@
 import { query, type SDKMessage } from '@anthropic-ai/claude-code';
 import { sessionManager } from './session-manager.js';
+import { config } from '../config.js';
 
 interface AgentResponse {
   text: string;
@@ -58,7 +59,7 @@ export async function sendToAgent(
         allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'],
         permissionMode: 'acceptEdits',
         abortController,
-        pathToClaudeCodeExecutable: '/Users/nacho/.local/bin/claude',
+        ...(config.CLAUDE_PATH && { pathToClaudeCodeExecutable: config.CLAUDE_PATH }),
         stderr: (data: string) => {
           console.error('[Claude stderr]:', data);
         },
