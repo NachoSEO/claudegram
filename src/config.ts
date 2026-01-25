@@ -15,7 +15,7 @@ const envSchema = z.object({
   STREAMING_MODE: z.enum(['streaming', 'wait']).default('streaming'),
   STREAMING_DEBOUNCE_MS: z
     .string()
-    .default('150')
+    .default('500')
     .transform((val) => parseInt(val, 10)),
   MAX_MESSAGE_LENGTH: z
     .string()
