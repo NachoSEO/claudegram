@@ -10,8 +10,7 @@ const envSchema = z.object({
     .min(1, 'At least one allowed user ID is required')
     .transform((val) => val.split(',').map((id) => parseInt(id.trim(), 10))),
   ANTHROPIC_API_KEY: z.string().optional(), // Optional - uses Claude Max subscription if not set
-  CLAUDE_PATH: z.string().optional(), // Path to claude executable (if not using SDK bundled version)
-  WORKSPACE_DIR: z.string().default(process.env.HOME + '/Workspace'),
+  WORKSPACE_DIR: z.string().default('/Users/nacho/Workspace'),
   STREAMING_MODE: z.enum(['streaming', 'wait']).default('streaming'),
   STREAMING_DEBOUNCE_MS: z
     .string()
