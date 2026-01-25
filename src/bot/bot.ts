@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { authMiddleware } from './middleware/auth.middleware.js';
 import {
   handleStart,
-  handleNew,
+  handleClear,
   handleProject,
   handleNewProject,
   handleStatus,
@@ -25,7 +25,7 @@ export function createBot(): Bot {
 
   // Bot command handlers
   bot.command('start', handleStart);
-  bot.command('new', handleNew);
+  bot.command('clear', handleClear);
   bot.command('project', handleProject);
   bot.command('newproject', handleNewProject);
   bot.command('status', handleStatus);

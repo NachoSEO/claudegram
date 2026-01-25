@@ -50,7 +50,7 @@ export function getAvailableCommands(): string {
 
 • \`/project <name>\` - Open a project
 • \`/newproject <name>\` - Create a new project
-• \`/new\` - Clear session and start fresh
+• \`/clear\` - Clear session and start fresh
 • \`/status\` - Show current session info
 • \`/ping\` - Check if bot is responsive
 • \`/cancel\` - Cancel current request`;

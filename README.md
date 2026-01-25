@@ -53,7 +53,7 @@ Telegram App → Telegram API → Claudegram Bot → Claude Agent SDK → Local 
 |---------|-------------|
 | `/start` | Welcome message and help |
 | `/project <path>` | Set working directory |
-| `/new` | Clear session and start fresh |
+| `/clear` | Clear session and start fresh |
 | `/status` | Show current session info |
 | `/mode` | Show response mode |
 

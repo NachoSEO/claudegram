@@ -27,7 +27,7 @@ I bridge your messages to Claude Code running on your local machine.
 **Commands:**
 • \`/project <name>\` - Open a project
 • \`/newproject <name>\` - Create a new project
-• \`/new\` - Clear session and start fresh
+• \`/clear\` - Clear session and start fresh
 • \`/status\` - Show current session info
 • \`/commands\` - Show all available commands
 
@@ -36,7 +36,7 @@ Current mode: ${config.STREAMING_MODE}`;
   await ctx.reply(welcomeMessage);
 }
 
-export async function handleNew(ctx: Context): Promise<void> {
+export async function handleClear(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 
