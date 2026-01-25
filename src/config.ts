@@ -21,6 +21,10 @@ const envSchema = z.object({
     .string()
     .default('4000')
     .transform((val) => parseInt(val, 10)),
+  POLLING_TIMEOUT: z
+    .string()
+    .default('10')
+    .transform((val) => parseInt(val, 10)), // Telegram polling timeout in seconds
 });
 
 const parsed = envSchema.safeParse(process.env);

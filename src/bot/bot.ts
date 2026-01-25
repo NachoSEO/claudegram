@@ -28,9 +28,20 @@ export function createBot(): Bot {
   // Handle regular text messages
   bot.on('message:text', handleMessage);
 
-  // Error handler
+  // Error handler with connection diagnostics
   bot.catch((err) => {
-    console.error('Bot error:', err);
+    const error = err.error as any;
+
+    // Check for common network/connection errors
+    if (error?.code === 'ETIMEDOUT' || error?.code === 'ECONNRESET' || error?.code === 'ENOTFOUND') {
+      console.error(`🔌 Network error (${error.code}): Connection issue detected`);
+      console.error('   This may be due to laptop sleep/wake or network connectivity');
+      console.error('   The bot will automatically retry...');
+    } else if (error?.message?.includes('conflict')) {
+      console.error('⚠️  Bot conflict: Another instance may be running');
+    } else {
+      console.error('❌ Bot error:', error);
+    }
   });
 
   return bot;
