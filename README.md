@@ -282,6 +282,20 @@ npm run build
 npm start
 ```
 
+## Self‑Editing Workflow (Bot Working on Itself)
+
+If you’re using Claudegram to modify its own codebase, **avoid dev/watch mode**. Hot reload will restart the bot on every file change and interrupt your session.
+
+Recommended flow:
+1. Start **prod** mode (no hot reload): `./scripts/claudegram-botctl.sh prod start`
+2. Let the bot edit files safely without restarts.
+3. When you’re ready to apply changes: `./scripts/claudegram-botctl.sh prod restart`
+4. In Telegram, run `/continue` or `/resume` to restore your session.
+
+Notes:
+- Changes only take effect **after** a restart in prod mode.
+- Use `/botstatus` to verify the bot is running.
+
 ## Security
 
 - Only configured Telegram user IDs can interact with the bot
