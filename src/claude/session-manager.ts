@@ -2,6 +2,7 @@ import { sessionHistory, SessionHistoryEntry } from './session-history.js';
 
 interface Session {
   conversationId: string;
+  claudeSessionId?: string;
   workingDirectory: string;
   createdAt: Date;
   lastActivity: Date;
@@ -17,6 +18,7 @@ class SessionManager {
   createSession(chatId: number, workingDirectory: string, conversationId?: string): Session {
     const session: Session = {
       conversationId: conversationId || this.generateConversationId(),
+      claudeSessionId: undefined,
       workingDirectory,
       createdAt: new Date(),
       lastActivity: new Date(),
@@ -24,7 +26,7 @@ class SessionManager {
     this.sessions.set(chatId, session);
 
     // Persist to history
-    sessionHistory.saveSession(chatId, session.conversationId, workingDirectory);
+    sessionHistory.saveSession(chatId, session.conversationId, workingDirectory, '', session.claudeSessionId);
 
     return session;
   }
@@ -47,7 +49,7 @@ class SessionManager {
       existing.workingDirectory = directory;
       existing.lastActivity = new Date();
       // Save updated session
-      sessionHistory.saveSession(chatId, existing.conversationId, directory);
+      sessionHistory.saveSession(chatId, existing.conversationId, directory, '', existing.claudeSessionId);
       return existing;
     }
     return this.createSession(chatId, directory);
@@ -66,6 +68,7 @@ class SessionManager {
 
     const session: Session = {
       conversationId: historyEntry.conversationId,
+      claudeSessionId: historyEntry.claudeSessionId,
       workingDirectory: historyEntry.projectPath,
       createdAt: new Date(historyEntry.createdAt),
       lastActivity: new Date(),
@@ -73,7 +76,7 @@ class SessionManager {
     this.sessions.set(chatId, session);
 
     // Update history activity
-    sessionHistory.saveSession(chatId, conversationId, historyEntry.projectPath);
+    sessionHistory.saveSession(chatId, conversationId, historyEntry.projectPath, historyEntry.lastMessagePreview, historyEntry.claudeSessionId);
 
     return session;
   }
@@ -89,6 +92,14 @@ class SessionManager {
 
   getSessionHistory(chatId: number, limit: number = 5): SessionHistoryEntry[] {
     return sessionHistory.getHistory(chatId, limit);
+  }
+
+  setClaudeSessionId(chatId: number, claudeSessionId: string): void {
+    const session = this.sessions.get(chatId);
+    if (!session) return;
+    session.claudeSessionId = claudeSessionId;
+    session.lastActivity = new Date();
+    sessionHistory.updateClaudeSessionId(chatId, session.conversationId, claudeSessionId);
   }
 
   private generateConversationId(): string {

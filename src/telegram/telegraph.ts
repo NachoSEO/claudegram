@@ -192,18 +192,44 @@ function markdownToNodes(markdown: string): TelegraphNode[] {
       continue;
     }
 
-    // Table row - convert to formatted text with code styling for cells
-    if (line.includes('|')) {
+    // Table handling - convert to clean formatted lists instead of fake tables
+    if (line.includes('|') && line.trim().startsWith('|')) {
       flushList();
       const cells = line.split('|').filter(c => c.trim()).map(c => c.trim());
-      if (cells.length > 0 && !cells.every(c => /^[-:]+$/.test(c))) {
-        // Not a separator row - format as code-styled row
-        const rowContent: TelegraphNode[] = [];
+
+      // Skip separator rows (e.g., |---|---|)
+      if (cells.length > 0 && cells.every(c => /^[-:]+$/.test(c))) {
+        continue;
+      }
+
+      // Detect header row: if next line is a separator, this is the header
+      const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
+      const nextCells = nextLine.split('|').filter(c => c.trim()).map(c => c.trim());
+      const isHeader = nextCells.length > 0 && nextCells.every(c => /^[-:]+$/.test(c));
+
+      if (isHeader && cells.length > 0) {
+        // Store headers for subsequent data rows
+        (markdownToNodes as any).__tableHeaders = cells;
+        // Render header as a bold line
+        nodes.push({ tag: 'p', children: [{ tag: 'b', children: [cells.join('  ·  ')] }] });
+        continue;
+      }
+
+      // Data row - use stored headers for labeled output
+      const headers: string[] = (markdownToNodes as any).__tableHeaders;
+      if (headers && headers.length > 0 && cells.length > 0) {
+        const parts: TelegraphNode[] = [];
         cells.forEach((cell, idx) => {
-          if (idx > 0) rowContent.push(' │ ');
-          rowContent.push({ tag: 'code', children: [cell] });
+          if (idx > 0) parts.push('  |  ');
+          if (headers[idx]) {
+            parts.push({ tag: 'b', children: [headers[idx] + ': '] });
+          }
+          parts.push(cell);
         });
-        nodes.push({ tag: 'p', children: rowContent });
+        nodes.push({ tag: 'p', children: parts });
+      } else if (cells.length > 0) {
+        // No headers available - just join with separator
+        nodes.push({ tag: 'p', children: [cells.join('  |  ')] });
       }
       continue;
     }

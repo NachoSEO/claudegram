@@ -141,6 +141,8 @@ No extra setup required. Images sent in chat are saved to:
 | `/resume` | Pick from recent sessions |
 | `/continue` | Resume most recent session |
 
+**Note:** `/resume` and `/continue` restore the last project + Claude session ID. This enables conversation continuity across bot restarts.
+
 ### Agent Modes
 | Command | Description |
 |---------|-------------|

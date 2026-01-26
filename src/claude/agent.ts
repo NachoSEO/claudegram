@@ -136,7 +136,7 @@ export async function sendToAgent(
   try {
     const controller = abortController || new AbortController();
 
-    const existingSessionId = chatSessionIds.get(chatId);
+    const existingSessionId = chatSessionIds.get(chatId) || session.claudeSessionId;
 
     const queryOptions: Parameters<typeof query>[0]['options'] = {
       cwd: session.workingDirectory,
@@ -153,6 +153,9 @@ export async function sendToAgent(
     // Resume existing session for conversation continuity
     if (existingSessionId) {
       queryOptions.resume = existingSessionId;
+      if (!chatSessionIds.get(chatId)) {
+        chatSessionIds.set(chatId, existingSessionId);
+      }
       console.log(`[Claude] Resuming session ${existingSessionId} for chat ${chatId}`);
     }
 
@@ -203,6 +206,7 @@ export async function sendToAgent(
         // Capture session_id for conversation continuity
         if ('session_id' in responseMessage && responseMessage.session_id) {
           chatSessionIds.set(chatId, responseMessage.session_id);
+          sessionManager.setClaudeSessionId(chatId, responseMessage.session_id);
           console.log(`[Claude] Stored session ${responseMessage.session_id} for chat ${chatId}`);
         }
 
