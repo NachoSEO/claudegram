@@ -1,4 +1,4 @@
-import { query, type SDKMessage } from '@anthropic-ai/claude-code';
+import { query, type SDKMessage, type PermissionMode, type SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { sessionManager } from './session-manager.js';
 import { config } from '../config.js';
 
@@ -132,8 +132,6 @@ Semantic mappings for natural language Reddit queries:
 - "this month" → --sort top --time month
 - "rising" → --sort rising`;
 
-type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
-
 function getPermissionMode(command?: string): PermissionMode {
   // If DANGEROUS_MODE is enabled, bypass all permissions
   if (config.DANGEROUS_MODE) {
@@ -193,31 +191,32 @@ export async function sendToAgent(
 
     const existingSessionId = chatSessionIds.get(chatId) || session.claudeSessionId;
 
-    const queryOptions: Parameters<typeof query>[0]['options'] = {
-      cwd: session.workingDirectory,
-      allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'],
-      permissionMode,
-      abortController: controller,
-      pathToClaudeCodeExecutable: config.CLAUDE_EXECUTABLE_PATH,
-      appendSystemPrompt: SYSTEM_PROMPT,
-      stderr: (data: string) => {
-        console.error('[Claude stderr]:', data);
-      },
-    };
-
-    // Resume existing session for conversation continuity
+    // Log session resume if applicable
     if (existingSessionId) {
-      queryOptions.resume = existingSessionId;
       if (!chatSessionIds.get(chatId)) {
         chatSessionIds.set(chatId, existingSessionId);
       }
       console.log(`[Claude] Resuming session ${existingSessionId} for chat ${chatId}`);
     }
 
-    // Add model if specified
-    if (effectiveModel) {
-      (queryOptions as Record<string, unknown>).model = effectiveModel;
-    }
+    const queryOptions: Parameters<typeof query>[0]['options'] = {
+      cwd: session.workingDirectory,
+      allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'],
+      permissionMode,
+      abortController: controller,
+      systemPrompt: {
+        type: 'preset' as const,
+        preset: 'claude_code' as const,
+        append: SYSTEM_PROMPT,
+      },
+      settingSources: ['project'] as SettingSource[],
+      model: effectiveModel,
+      resume: existingSessionId,
+      ...(permissionMode === 'bypassPermissions' ? { allowDangerouslySkipPermissions: true } : {}),
+      stderr: (data: string) => {
+        console.error('[Claude stderr]:', data);
+      },
+    };
 
     const response = await query({
       prompt,

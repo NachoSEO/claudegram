@@ -96,7 +96,7 @@ const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
   console.error('❌ Invalid environment configuration:');
-  console.error(parsed.error.format());
+  console.error(parsed.error.message);
   process.exit(1);
 }
 
