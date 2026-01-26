@@ -1,6 +1,9 @@
-import { Context, Api } from 'grammy';
+import { Context, Api, InputFile } from 'grammy';
 import { config } from '../config.js';
-import { splitMessage } from './markdown.js';
+import { processMessageForTelegram, convertToTelegramMarkdown, escapeMarkdownV2 } from './markdown.js';
+import { shouldUseTelegraph, createTelegraphPage, createTelegraphFromFile } from './telegraph.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 interface StreamState {
   messageId: number | null;
@@ -15,11 +18,124 @@ const TYPING_INTERVAL_MS = 4000; // Send typing every 4 seconds
 export class MessageSender {
   private streamStates: Map<number, StreamState> = new Map();
 
+  /**
+   * Send a message with hybrid approach:
+   * - Short content: MarkdownV2 inline
+   * - Long content or tables: Telegraph page link
+   */
   async sendMessage(ctx: Context, text: string): Promise<void> {
-    const parts = splitMessage(text, config.MAX_MESSAGE_LENGTH);
+    // Check if we should use Telegraph for this content
+    if (shouldUseTelegraph(text)) {
+      const pageUrl = await createTelegraphPage('Claude Response', text);
+
+      if (pageUrl) {
+        // Send Telegraph link with a brief summary
+        const summary = text.substring(0, 200).replace(/[#*_`\[\]]/g, '') + '...';
+        const message = `📄 *Full response available:*\n\n${escapeMarkdownV2(summary)}\n\n[Open in Instant View](${escapeMarkdownV2(pageUrl)})`;
+
+        try {
+          await ctx.reply(message, { parse_mode: 'MarkdownV2' });
+          return;
+        } catch (error) {
+          console.error('[Telegraph] Failed to send link, falling back to chunks:', error);
+        }
+      }
+    }
+
+    // Default: MarkdownV2 with chunking
+    const parts = processMessageForTelegram(text, config.MAX_MESSAGE_LENGTH);
 
     for (const part of parts) {
-      await ctx.reply(part, { parse_mode: undefined });
+      try {
+        await ctx.reply(part, { parse_mode: 'MarkdownV2' });
+      } catch (error) {
+        // If MarkdownV2 fails, try with escaped plain text
+        console.error('MarkdownV2 send failed, trying escaped fallback:', error);
+        try {
+          await ctx.reply(escapeMarkdownV2(text), { parse_mode: 'MarkdownV2' });
+        } catch (fallbackError) {
+          // Last resort: send as plain text
+          console.error('Fallback also failed, sending plain text:', fallbackError);
+          await ctx.reply(text, { parse_mode: undefined });
+        }
+      }
+    }
+  }
+
+  /**
+   * Send a file as a document attachment
+   */
+  async sendDocument(ctx: Context, filePath: string, caption?: string): Promise<boolean> {
+    try {
+      if (!fs.existsSync(filePath)) {
+        console.error('[Document] File not found:', filePath);
+        return false;
+      }
+
+      const fileName = path.basename(filePath);
+      const fileBuffer = fs.readFileSync(filePath);
+      const inputFile = new InputFile(fileBuffer, fileName);
+
+      await ctx.replyWithDocument(inputFile, {
+        caption: caption ? escapeMarkdownV2(caption) : undefined,
+        parse_mode: caption ? 'MarkdownV2' : undefined
+      });
+
+      return true;
+    } catch (error) {
+      console.error('[Document] Failed to send:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Send a markdown file with Telegraph preview option
+   */
+  async sendMarkdownFile(
+    ctx: Context,
+    filePath: string,
+    options: { useTelegraph?: boolean; sendAsDocument?: boolean } = {}
+  ): Promise<boolean> {
+    const { useTelegraph = true, sendAsDocument = false } = options;
+
+    try {
+      if (!fs.existsSync(filePath)) {
+        console.error('[Markdown] File not found:', filePath);
+        return false;
+      }
+
+      const fileName = path.basename(filePath);
+      const content = fs.readFileSync(filePath, 'utf-8');
+
+      // Option 1: Telegraph (Instant View)
+      if (useTelegraph) {
+        const pageUrl = await createTelegraphFromFile(filePath);
+
+        if (pageUrl) {
+          const message = `📄 *${escapeMarkdownV2(fileName)}*\n\n[Open in Instant View](${escapeMarkdownV2(pageUrl)})`;
+
+          await ctx.reply(message, { parse_mode: 'MarkdownV2' });
+
+          // Also send as document if requested
+          if (sendAsDocument) {
+            await this.sendDocument(ctx, filePath, 'Download file');
+          }
+
+          return true;
+        }
+      }
+
+      // Option 2: Send as document
+      if (sendAsDocument) {
+        return await this.sendDocument(ctx, filePath, `📎 ${fileName}`);
+      }
+
+      // Option 3: Send content inline
+      await this.sendMessage(ctx, content);
+      return true;
+    } catch (error) {
+      console.error('[Markdown] Failed to send:', error);
+      return false;
     }
   }
 
@@ -27,7 +143,7 @@ export class MessageSender {
     const chatId = ctx.chat?.id;
     if (!chatId) return;
 
-    const message = await ctx.reply('▌');
+    const message = await ctx.reply('▌', { parse_mode: undefined });
 
     // Start continuous typing indicator
     const typingInterval = this.startTypingIndicator(ctx.api, chatId);
@@ -85,8 +201,10 @@ export class MessageSender {
   private async flushUpdate(ctx: Context, state: StreamState): Promise<void> {
     if (!state.messageId) return;
 
+    // For streaming updates, keep it simple - just show truncated content with cursor
+    // Don't convert to MarkdownV2 during streaming to avoid parsing errors mid-message
     const displayContent = state.content.length > 0
-      ? state.content.substring(0, config.MAX_MESSAGE_LENGTH - 1) + '▌'
+      ? state.content.substring(0, config.MAX_MESSAGE_LENGTH - 10) + ' ▌'
       : '▌';
 
     try {
@@ -94,7 +212,7 @@ export class MessageSender {
         ctx.chat!.id,
         state.messageId,
         displayContent,
-        { parse_mode: undefined }
+        { parse_mode: undefined } // Plain text during streaming for stability
       );
       state.lastUpdate = Date.now();
     } catch (error: unknown) {
@@ -116,20 +234,66 @@ export class MessageSender {
       this.stopTypingIndicator(state);
 
       if (state.messageId) {
-        const parts = splitMessage(finalContent, config.MAX_MESSAGE_LENGTH);
+        // Check if we should use Telegraph for final content
+        if (shouldUseTelegraph(finalContent)) {
+          const pageUrl = await createTelegraphPage('Claude Response', finalContent);
+
+          if (pageUrl) {
+            try {
+              const summary = finalContent.substring(0, 200).replace(/[#*_`\[\]]/g, '') + '...';
+              const message = `📄 *Response ready:*\n\n${escapeMarkdownV2(summary)}\n\n[Open in Instant View](${escapeMarkdownV2(pageUrl)})`;
+
+              await ctx.api.editMessageText(
+                chatId,
+                state.messageId,
+                message,
+                { parse_mode: 'MarkdownV2' }
+              );
+
+              this.streamStates.delete(chatId);
+              return;
+            } catch (error) {
+              console.error('[Telegraph] Failed, falling back to chunks:', error);
+            }
+          }
+        }
+
+        // Default: MarkdownV2 with chunking
+        const parts = processMessageForTelegram(finalContent, config.MAX_MESSAGE_LENGTH);
 
         try {
-          // Update the first message with first part
-          await ctx.api.editMessageText(
-            chatId,
-            state.messageId,
-            parts[0] || 'Done.',
-            { parse_mode: undefined }
-          );
+          // Update the first message with first part (use MarkdownV2)
+          const firstPart = parts[0] || 'Done\\.';
 
-          // Send additional messages for remaining parts
-          for (let i = 1; i < parts.length; i++) {
-            await ctx.reply(parts[i], { parse_mode: undefined });
+          try {
+            await ctx.api.editMessageText(
+              chatId,
+              state.messageId,
+              firstPart,
+              { parse_mode: 'MarkdownV2' }
+            );
+
+            // Send additional messages for remaining parts
+            for (let i = 1; i < parts.length; i++) {
+              try {
+                await ctx.reply(parts[i], { parse_mode: 'MarkdownV2' });
+              } catch (partError) {
+                console.error(`MarkdownV2 failed for part ${i + 1}:`, partError);
+                await ctx.reply(parts[i], { parse_mode: undefined });
+              }
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          } catch (mdError) {
+            // MarkdownV2 failed — delete streaming placeholder and
+            // re-send via sendMessage which handles Telegraph + chunking
+            console.error('MarkdownV2 edit failed, falling back to sendMessage:', mdError);
+            try {
+              await ctx.api.deleteMessage(chatId, state.messageId);
+            } catch { /* ignore */ }
+
+            this.streamStates.delete(chatId);
+            await this.sendMessage(ctx, finalContent);
+            return;
           }
         } catch (error) {
           console.error('Error finishing stream:', error);

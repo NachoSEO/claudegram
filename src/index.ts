@@ -11,7 +11,7 @@ async function main() {
   // Prevent system sleep on macOS
   preventSleep();
 
-  const bot = createBot();
+  const bot = await createBot();
 
   // Graceful shutdown
   const shutdown = () => {

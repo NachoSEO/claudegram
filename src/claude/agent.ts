@@ -26,17 +26,56 @@ interface LoopOptions extends AgentOptions {
 
 const conversationHistory: Map<number, ConversationMessage[]> = new Map();
 
+// Track Claude Code session IDs per chat for conversation continuity
+const chatSessionIds: Map<number, string> = new Map();
+
 // Track current model per chat (default: sonnet)
 const chatModels: Map<number, string> = new Map();
 
-const SYSTEM_PROMPT = `You are Claude, an AI assistant helping via Telegram.
+const SYSTEM_PROMPT = `You are ${config.BOT_NAME}, an AI assistant helping via Telegram.
 
 Guidelines:
-- Be concise - responses appear on a phone screen
-- When asked to do tasks, do them directly without asking for confirmation
 - Show relevant code snippets when helpful, but keep them short
 - If a task requires multiple steps, execute them and summarize what you did
-- When you can't do something, explain why briefly`;
+- When you can't do something, explain why briefly
+
+Reddit Tool:
+You have access to a Reddit fetching tool via Bash.
+Path: python3 ${config.REDDITFETCH_PATH} <target> [options]
+
+Targets: post URL, post ID, r/<subreddit>, u/<username>, share links (reddit.com/r/.../s/...)
+Flags: --sort <hot|new|top|rising>, --limit <n>, --time <day|week|month|year|all>, --depth <n>, -o <file>, -f <markdown|json>
+The tool handles its own authentication. Always use the full absolute path shown above.
+
+IMPORTANT — File-Based Workflow for Single Posts:
+When fetching a single Reddit post (URL or ID), ALWAYS use this workflow to avoid flooding your context with thousands of comments:
+
+1. Save to file:
+   mkdir -p .reddit && python3 ${config.REDDITFETCH_PATH} "<url>" --depth 5 -o .reddit/<post_id>.md
+   Extract the post ID from the URL for the filename (e.g., 1lmkfhf.md). If it's a share link, use a slug from the URL.
+
+2. Read overview (first ~100 lines for post header + top comments):
+   Use the Read tool on .reddit/<post_id>.md with limit=200
+
+3. Report the overview to the user. Note the total comment count.
+
+4. When the user asks about a specific comment or user:
+   - Use Grep on .reddit/<post_id>.md to find by username (e.g., pattern "u/username") or keyword
+   - Use Read with offset/limit around the match to get full context
+   - Quote the relevant comment directly in your response
+
+5. Do NOT re-fetch unless the user explicitly asks. Reuse the saved .reddit/ file for all follow-up questions about the same post.
+
+For subreddit feeds (r/<sub>) and user profiles (u/<user>), output directly to stdout — no file needed since these are short listings.
+
+Semantic mappings for natural language Reddit queries:
+- "today" / "today's top" → --sort top --time day
+- "newest" / "latest" / "recent" → --sort new
+- "hottest" / "trending" / "what's hot" → --sort hot
+- "top" / "best" → --sort top
+- "this week" → --sort top --time week
+- "this month" → --sort top --time month
+- "rising" → --sort rising`;
 
 type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
 
@@ -97,16 +136,25 @@ export async function sendToAgent(
   try {
     const controller = abortController || new AbortController();
 
+    const existingSessionId = chatSessionIds.get(chatId);
+
     const queryOptions: Parameters<typeof query>[0]['options'] = {
       cwd: session.workingDirectory,
       allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'],
       permissionMode,
       abortController: controller,
-      pathToClaudeCodeExecutable: '/Users/nacho/.local/bin/claude',
+      pathToClaudeCodeExecutable: config.CLAUDE_EXECUTABLE_PATH,
+      appendSystemPrompt: SYSTEM_PROMPT,
       stderr: (data: string) => {
         console.error('[Claude stderr]:', data);
       },
     };
+
+    // Resume existing session for conversation continuity
+    if (existingSessionId) {
+      queryOptions.resume = existingSessionId;
+      console.log(`[Claude] Resuming session ${existingSessionId} for chat ${chatId}`);
+    }
 
     // Add model if specified
     if (effectiveModel) {
@@ -136,12 +184,28 @@ export async function sendToAgent(
             fullText += block.text;
             onProgress?.(fullText);
           } else if (block.type === 'tool_use') {
+            const toolInput = 'input' in block ? block.input as Record<string, unknown> : {};
+            const inputSummary = toolInput.command
+              ? String(toolInput.command).substring(0, 150)
+              : toolInput.pattern
+                ? String(toolInput.pattern)
+                : toolInput.file_path
+                  ? String(toolInput.file_path)
+                  : '';
+            console.log(`[Claude] Tool: ${block.name}${inputSummary ? ` → ${inputSummary}` : ''}`);
             toolsUsed.push(block.name);
           }
         }
       } else if (responseMessage.type === 'result') {
         console.log('[Claude] Result:', JSON.stringify(responseMessage, null, 2).substring(0, 500));
         gotResult = true;
+
+        // Capture session_id for conversation continuity
+        if ('session_id' in responseMessage && responseMessage.session_id) {
+          chatSessionIds.set(chatId, responseMessage.session_id);
+          console.log(`[Claude] Stored session ${responseMessage.session_id} for chat ${chatId}`);
+        }
+
         if (responseMessage.subtype === 'success') {
           // Append final result text if different from accumulated
           if (responseMessage.result && !fullText.includes(responseMessage.result)) {
@@ -281,6 +345,7 @@ IMPORTANT: When you have fully completed this task, respond with the word "DONE"
 
 export function clearConversation(chatId: number): void {
   conversationHistory.delete(chatId);
+  chatSessionIds.delete(chatId);
 }
 
 export function setModel(chatId: number, model: string): void {

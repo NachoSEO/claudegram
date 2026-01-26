@@ -38,27 +38,39 @@ export function isClaudeCommand(message: string): boolean {
   return CLAUDE_COMMANDS.includes(commandPart as ClaudeCommand);
 }
 
+// Returns MarkdownV2 escaped command list
 export function getAvailableCommands(): string {
-  return `**Claude Commands:**
+  return `*Claude Commands:*
 
-• \`/plan <task>\` - Enter plan mode for complex tasks
-• \`/explore <question>\` - Use explore agent for codebase questions
-• \`/loop <task>\` - Run iteratively until task complete (max 5 iterations)
-• \`/model [name]\` - Show or set Claude model (sonnet, opus, haiku)
-• \`/commands\` - Show this list
+• \`/plan <task>\` \\- Enter plan mode for complex tasks
+• \`/explore <question>\` \\- Use explore agent for codebase questions
+• \`/loop <task>\` \\- Run iteratively until task complete
+• \`/model \\[name\\]\` \\- Show or set Claude model
+• \`/commands\` \\- Show this list
 
-**Session Commands:**
+*Session Commands:*
 
-• \`/project <name>\` - Open a project
-• \`/newproject <name>\` - Create a new project
-• \`/resume\` - Pick from recent sessions to resume
-• \`/continue\` - Resume most recent session
-• \`/sessions\` - List all sessions
-• \`/clear\` - Clear session and start fresh
-• \`/status\` - Show current session info
+• \`/project <path>\` \\- Set working directory
+• \`/newproject <name>\` \\- Create a new project
+• \`/resume\` \\- Pick from recent sessions to resume
+• \`/continue\` \\- Resume most recent session
+• \`/sessions\` \\- List all sessions
+• \`/clear\` \\- Clear session and start fresh
+• \`/status\` \\- Show current session info
 
-**Bot Commands:**
+*File Commands:*
 
-• \`/ping\` - Check if bot is responsive
-• \`/cancel\` - Cancel current request`;
+• \`/file <path>\` \\- Download a file from project
+• \`/telegraph <path>\` \\- View markdown with Instant View
+
+*Reddit Commands:*
+
+• \`/reddit <target>\` \\- Fetch Reddit posts, subreddits, or user profiles
+
+*Bot Commands:*
+
+• \`/tts\` \\- Toggle voice replies
+• \`/ping\` \\- Check if bot is responsive
+• \`/cancel\` \\- Cancel current request
+• \`/mode\` \\- Toggle streaming mode`;
 }
