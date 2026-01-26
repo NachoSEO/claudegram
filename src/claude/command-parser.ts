@@ -70,6 +70,7 @@ export function getAvailableCommands(): string {
 *Bot Commands:*
 
 • \`/tts\` \\- Toggle voice replies
+• \`/context\` \\- Show Claude context usage
 • \`/botstatus\` \\- Show bot process status
 • \`/restartbot\` \\- Restart the bot process
 • \`/ping\` \\- Check if bot is responsive

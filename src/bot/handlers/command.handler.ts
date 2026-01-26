@@ -71,6 +71,97 @@ function runBotCtl(args: string[]): Promise<{ stdout: string; stderr: string }> 
 
 type TTSMenuMode = 'main' | 'voices';
 
+function parseContextOutput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return '⚠️ No context output received.';
+  }
+
+  const lines = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  let model = '';
+  let tokensLine = '';
+  const categories: Array<{ name: string; tokens: string; percent: string }> = [];
+  let inCategories = false;
+
+  for (const line of lines) {
+    if (/^model:/i.test(line)) {
+      model = line.replace(/^model:/i, '').trim();
+      continue;
+    }
+    if (/^tokens:/i.test(line)) {
+      tokensLine = line.replace(/^tokens:/i, '').trim();
+      continue;
+    }
+    if (/estimated usage by category/i.test(line)) {
+      inCategories = true;
+      continue;
+    }
+    if (inCategories) {
+      if (/^category/i.test(line)) continue;
+      if (/^-+$/.test(line)) continue;
+
+      const match = line.match(/^(.+?)\s{2,}([0-9.,kKmM]+)\s+([0-9.,]+%)$/);
+      if (match) {
+        categories.push({ name: match[1].trim(), tokens: match[2], percent: match[3] });
+        continue;
+      }
+
+      const parts = line.split(/\s+/);
+      if (parts.length >= 3 && parts[parts.length - 1].endsWith('%')) {
+        const percent = parts.pop() as string;
+        const tokens = parts.pop() as string;
+        const name = parts.join(' ');
+        categories.push({ name, tokens, percent });
+      }
+    }
+  }
+
+  if (!model && !tokensLine && categories.length === 0) {
+    return `## 🧠 Context Usage\n\n\`\`\`\n${trimmed}\n\`\`\``;
+  }
+
+  let output = '## 🧠 Context Usage';
+  if (model) output += `\n- **Model:** ${model}`;
+  if (tokensLine) output += `\n- **Tokens:** ${tokensLine}`;
+
+  if (categories.length > 0) {
+    output += '\n\n### Estimated usage by category';
+    for (const category of categories) {
+      output += `\n- **${category.name}:** ${category.tokens} (${category.percent})`;
+    }
+  }
+
+  output += '\n\n_If this looks stale, send a new message then run /context again._';
+  return output;
+}
+
+async function runClaudeContext(sessionId: string, cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      config.CLAUDE_EXECUTABLE_PATH,
+      ['-p', '--resume', sessionId, '/context'],
+      {
+        cwd,
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024,
+        env: process.env,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const message = (stderr || error.message).trim();
+          reject(new Error(message || 'Failed to run /context'));
+          return;
+        }
+        resolve((stdout || stderr || '').trim());
+      }
+    );
+  });
+}
+
 function buildTTSMenu(chatId: number, mode: TTSMenuMode) {
   const settings = getTTSSettings(chatId);
   const apiStatus = config.OPENAI_API_KEY ? 'configured' : 'missing';
@@ -496,6 +587,48 @@ export async function handleTTSCallback(ctx: Context): Promise<void> {
 export async function handlePing(ctx: Context): Promise<void> {
   const uptime = getUptimeFormatted();
   await replyMd(ctx, `🏓 Pong\\!\n\nUptime: ${esc(uptime)}`);
+}
+
+export async function handleContext(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const session = sessionManager.getSession(chatId);
+  if (!session) {
+    await ctx.reply(
+      '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project` to open a project first\\.',
+      { parse_mode: 'MarkdownV2' }
+    );
+    return;
+  }
+
+  if (!session.claudeSessionId) {
+    await replyMd(
+      ctx,
+      '⚠️ No Claude session ID found\\.\n\nSend a message to Claude after resuming, then run `/context` again\\.'
+    );
+    return;
+  }
+
+  const ack = await ctx.reply('🧠 Checking context...', { parse_mode: undefined });
+
+  try {
+    const raw = await runClaudeContext(session.claudeSessionId, session.workingDirectory);
+    const formatted = parseContextOutput(raw);
+    await messageSender.sendMessage(ctx, formatted);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    const hint = message.toLowerCase().includes('unknown') || message.toLowerCase().includes('command')
+      ? '\n\nThis CLI may not support `/context` yet.'
+      : '';
+    await messageSender.sendMessage(ctx, `❌ Failed to fetch context: ${message}${hint}`);
+  } finally {
+    try {
+      await ctx.api.deleteMessage(chatId, ack.message_id);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
 }
 
 export async function handleBotStatus(ctx: Context): Promise<void> {
