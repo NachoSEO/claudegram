@@ -21,8 +21,10 @@ Telegram App  ->  Telegram API  ->  Claudegram  ->  Claude Code SDK  ->  Your Ma
 ### Reddit Integration
 - `/reddit` command for fetching posts, subreddits, and user profiles
 - Natural language Reddit queries ("show me today's top posts on r/programming")
-- File-based workflow: large posts are saved to `.reddit/` and analyzed with Read/Grep — no context bloat
-- Semantic mapping: "trending" -> `--sort hot`, "this week's best" -> `--sort top --time week`
+- Share links, bare post IDs, and `r/` / `u/` shortcuts supported
+- Large threads automatically fall back to **JSON output**, saved under `.claudegram/reddit/` and sent as a file
+- Threshold is configurable via `REDDITFETCH_JSON_THRESHOLD_CHARS`
+- Semantic mapping in the agent prompt: "trending" → `--sort hot`, "this week's best" → `--sort top --time week`
 
 ### Voice Transcription
 - Send a voice note -> Groq Whisper transcribes it -> transcript is fed to the agent as a message
@@ -37,6 +39,12 @@ Telegram App  ->  Telegram API  ->  Claudegram  ->  Claude Code SDK  ->  Your Ma
 - OGG/Opus output — displays as a native voice bubble in Telegram
 - Markdown is stripped before synthesis for natural-sounding speech
 - Per-chat voice and toggle settings
+
+### Image Uploads
+- Send photos or image documents directly in chat
+- Files are saved to the active project under `.claudegram/uploads/`
+- Claude is notified with the saved path + caption so it can reference, move, or edit images
+- Supports multiple images and Telegram albums (each image is handled and saved)
 
 ### Rich Output
 - MarkdownV2 formatting with automatic escaping
@@ -53,6 +61,7 @@ Telegram App  ->  Telegram API  ->  Claudegram  ->  Claude Code SDK  ->  Your Ma
 - **Claude Code CLI** installed and authenticated (`claude` in your PATH)
 - A **Telegram bot token** from [@BotFather](https://t.me/botfather)
 - Your **Telegram user ID** from [@userinfobot](https://t.me/userinfobot)
+- If `claude` isn't in your PATH, set `CLAUDE_EXECUTABLE_PATH` in `.env`
 
 ### 2. Clone & Configure
 
@@ -77,6 +86,46 @@ npm run dev
 ```
 
 Open your bot in Telegram and send `/start`.
+
+## Optional Integrations
+
+### Reddit (`/reddit`)
+1. Install the redditfetch tool (see `redditTools/README.md` in that repo).
+2. Set `REDDITFETCH_PATH` in `.env` to the absolute path of `redditfetch.py`.
+3. Configure Reddit API credentials in the redditfetch `.env` (client ID/secret, username, password).
+
+Example `.env` (Claudegram):
+```
+REDDITFETCH_PATH=/absolute/path/to/redditfetch.py
+```
+
+### Voice Transcription (Groq Whisper)
+1. Place `groq_transcribe.py` somewhere on your machine.
+2. Set `GROQ_API_KEY` and `GROQ_TRANSCRIBE_PATH` in `.env`.
+
+Example:
+```
+GROQ_API_KEY=your_groq_key
+GROQ_TRANSCRIBE_PATH=/absolute/path/to/groq_transcribe.py
+```
+
+### Text-to-Speech (OpenAI)
+1. Set `OPENAI_API_KEY` in `.env`.
+2. Optionally customize `TTS_MODEL`, `TTS_VOICE`, `TTS_INSTRUCTIONS`, and `TTS_RESPONSE_FORMAT`.
+
+Example:
+```
+OPENAI_API_KEY=your_openai_key
+TTS_MODEL=gpt-4o-mini-tts
+TTS_VOICE=coral
+TTS_RESPONSE_FORMAT=opus
+```
+
+### Image Uploads
+No extra setup required. Images sent in chat are saved to:
+```
+<project>/.claudegram/uploads/
+```
 
 ## Commands
 
@@ -111,6 +160,7 @@ Open your bot in Telegram and send `/start`.
 |---------|-------------|
 | `/tts` | Toggle voice replies on/off, change voice |
 | *Send voice note* | Auto-transcribed and processed as text |
+| *Send photo / image doc* | Saved to project and passed to agent |
 
 ### File Operations
 | Command | Description |
@@ -153,6 +203,7 @@ All configuration is via environment variables. See `.env.example` for the full 
 | `REDDITFETCH_TIMEOUT_MS` | `30000` | Execution timeout |
 | `REDDITFETCH_DEFAULT_LIMIT` | `10` | Default `--limit` |
 | `REDDITFETCH_DEFAULT_DEPTH` | `5` | Default comment `--depth` |
+| `REDDITFETCH_JSON_THRESHOLD_CHARS` | `8000` | Auto-switch to JSON output above this size |
 
 ### Optional — Voice Transcription
 | Variable | Default | Description |
@@ -162,6 +213,7 @@ All configuration is via environment variables. See `.env.example` for the full 
 | `VOICE_SHOW_TRANSCRIPT` | `true` | Show transcript before response |
 | `VOICE_MAX_FILE_SIZE_MB` | `19` | Max voice file size |
 | `VOICE_LANGUAGE` | `en` | Transcription language (ISO 639-1) |
+| `VOICE_TIMEOUT_MS` | `60000` | Transcription timeout |
 
 ### Optional — Text-to-Speech
 | Variable | Default | Description |
@@ -172,6 +224,12 @@ All configuration is via environment variables. See `.env.example` for the full 
 | `TTS_INSTRUCTIONS` | *friendly tone* | Tone instructions (gpt-4o-mini-tts) |
 | `TTS_SPEED` | `1.0` | Speech speed (0.25–4.0) |
 | `TTS_MAX_CHARS` | `4096` | Skip voice for longer responses |
+| `TTS_RESPONSE_FORMAT` | `opus` | Audio format (`opus`, `mp3`, `wav`, `flac`, `aac`) |
+
+### Optional — Image Uploads
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `IMAGE_MAX_FILE_SIZE_MB` | `20` | Max image size for download/save |
 
 ## Architecture
 
@@ -183,6 +241,7 @@ src/
       command.handler.ts    # /project, /reddit, /tts, /mode, etc.
       message.handler.ts    # Text message routing & response pipeline
       voice.handler.ts      # Voice note download, transcription, agent relay
+      photo.handler.ts      # Image download, save, and agent notification
     middleware/
       auth.ts               # User whitelist enforcement
       stale-filter.ts       # Ignore old messages on restart
@@ -232,7 +291,7 @@ npm start
 
 Original project by [NachoSEO](https://github.com/NachoSEO/claudegram).
 
-Extended with Reddit integration, voice transcription, TTS voice replies, conversation continuity, and rich output formatting.
+Extended with Reddit integration, voice transcription, TTS voice replies, image uploads, conversation continuity, and rich output formatting.
 
 ## License
 
