@@ -25,6 +25,7 @@ import { escapeMarkdownV2 } from '../../telegram/markdown.js';
 import { getTTSSettings, setTTSEnabled, setTTSVoice } from '../../tts/tts-settings.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
+import { executeVReddit } from '../../reddit/vreddit.js';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -50,6 +51,15 @@ const TTS_VOICES = [
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const BOTCTL_PATH = path.join(PROJECT_ROOT, 'scripts', 'claudegram-botctl.sh');
+const PROJECT_BROWSER_PAGE_SIZE = 8;
+
+type ProjectBrowserState = {
+  root: string;
+  current: string;
+  page: number;
+};
+
+const projectBrowserState = new Map<number, ProjectBrowserState>();
 
 function botctlExists(): boolean {
   return fs.existsSync(BOTCTL_PATH);
@@ -283,6 +293,240 @@ export async function handleClearCallback(ctx: Context): Promise<void> {
   }
 }
 
+export async function handleProjectCallback(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith('project:')) return;
+
+  const state = getProjectState(chatId);
+  const action = data.split(':')[1] || '';
+
+  if (action === 'manual') {
+    await ctx.answerCallbackQuery();
+    await sendProjectManualPrompt(ctx);
+    return;
+  }
+
+  if (action === 'use') {
+    sessionManager.setWorkingDirectory(chatId, state.current);
+    clearConversation(chatId);
+
+    await ctx.answerCallbackQuery({ text: 'Project set' });
+    await ctx.editMessageText(
+      `✅ Project: *${esc(path.basename(state.current))}*\n\nYou can now chat with Claude about this project\\!`,
+      { parse_mode: 'MarkdownV2' }
+    );
+    return;
+  }
+
+  if (action === 'up') {
+    const parent = path.dirname(state.current);
+    if (isWithinRoot(state.root, parent)) {
+      state.current = parent;
+      state.page = 0;
+    }
+    await ctx.answerCallbackQuery();
+    await sendProjectBrowser(ctx, state, true);
+    return;
+  }
+
+  if (action === 'page') {
+    const direction = data.split(':')[2];
+    if (direction === 'next') state.page += 1;
+    if (direction === 'prev') state.page = Math.max(0, state.page - 1);
+    await ctx.answerCallbackQuery();
+    await sendProjectBrowser(ctx, state, true);
+    return;
+  }
+
+  if (action === 'refresh') {
+    await ctx.answerCallbackQuery();
+    await sendProjectBrowser(ctx, state, true);
+    return;
+  }
+
+  if (action === 'open') {
+    const indexPart = data.split(':')[2];
+    const index = Number.parseInt(indexPart || '', 10);
+    if (Number.isNaN(index)) {
+      await ctx.answerCallbackQuery({ text: 'Invalid selection' });
+      return;
+    }
+    const entries = listDirectories(state.current);
+    const selected = entries[index];
+    if (!selected) {
+      await ctx.answerCallbackQuery({ text: 'Selection expired' });
+      await sendProjectBrowser(ctx, state, true);
+      return;
+    }
+    const nextPath = path.join(state.current, selected);
+    if (!isWithinRoot(state.root, nextPath)) {
+      await ctx.answerCallbackQuery({ text: 'Outside workspace' });
+      return;
+    }
+    state.current = nextPath;
+    state.page = 0;
+    await ctx.answerCallbackQuery();
+    await sendProjectBrowser(ctx, state, true);
+    return;
+  }
+}
+
+function getProjectRoot(): string {
+  const root = config.WORKSPACE_DIR || process.env.HOME || process.cwd();
+  return path.resolve(root);
+}
+
+function isWithinRoot(root: string, target: string): boolean {
+  const resolvedRoot = path.resolve(root);
+  const resolvedTarget = path.resolve(target);
+  return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(resolvedRoot + path.sep);
+}
+
+function listDirectories(dir: string): string[] {
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    return entries
+      .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map(entry => entry.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+function shortenName(name: string, maxLength: number = 24): string {
+  if (name.length <= maxLength) return name;
+  return `${name.slice(0, maxLength - 1)}…`;
+}
+
+function buildProjectBrowserText(state: ProjectBrowserState, totalDirs: number, totalPages: number): string {
+  const pageNumber = totalPages === 0 ? 1 : state.page + 1;
+  const safePath = esc(state.current);
+
+  return (
+    `📁 *Project Browser*\n\n` +
+    `*Current:* \`${safePath}\`\n` +
+    `*Folders:* ${totalDirs}\n` +
+    `*Page:* ${pageNumber}/${Math.max(totalPages, 1)}\n\n` +
+    `Select a folder below, or use the current folder\\.`
+  );
+}
+
+function buildProjectBrowserKeyboard(state: ProjectBrowserState, entries: string[], totalPages: number): { inline_keyboard: { text: string; callback_data: string }[][] } {
+  const rows: { text: string; callback_data: string }[][] = [];
+  const pageOffset = state.page * PROJECT_BROWSER_PAGE_SIZE;
+
+  for (let i = 0; i < entries.length; i += 2) {
+    const row: { text: string; callback_data: string }[] = [];
+    const first = entries[i];
+    const second = entries[i + 1];
+
+    if (first) {
+      const index = pageOffset + i;
+      row.push({ text: `📁 ${shortenName(first)}`, callback_data: `project:open:${index}` });
+    }
+    if (second) {
+      const index = pageOffset + i + 1;
+      row.push({ text: `📁 ${shortenName(second)}`, callback_data: `project:open:${index}` });
+    }
+    if (row.length > 0) rows.push(row);
+  }
+
+  const navRow: { text: string; callback_data: string }[] = [];
+  if (state.current !== state.root) {
+    navRow.push({ text: '⬆️ Up', callback_data: 'project:up' });
+  }
+  navRow.push({ text: '✅ Use this folder', callback_data: 'project:use' });
+  navRow.push({ text: '✍️ Enter path', callback_data: 'project:manual' });
+  rows.push(navRow);
+
+  const pageRow: { text: string; callback_data: string }[] = [];
+  if (state.page > 0) {
+    pageRow.push({ text: '◀️ Prev', callback_data: 'project:page:prev' });
+  }
+  if (state.page < totalPages - 1) {
+    pageRow.push({ text: 'Next ▶️', callback_data: 'project:page:next' });
+  }
+  if (pageRow.length > 0) {
+    rows.push(pageRow);
+  }
+
+  rows.push([{ text: '🔄 Refresh', callback_data: 'project:refresh' }]);
+
+  return { inline_keyboard: rows };
+}
+
+async function sendProjectBrowser(ctx: Context, state: ProjectBrowserState, edit: boolean): Promise<void> {
+  const allEntries = listDirectories(state.current);
+  const totalPages = Math.max(1, Math.ceil(allEntries.length / PROJECT_BROWSER_PAGE_SIZE));
+  const page = Math.min(Math.max(state.page, 0), totalPages - 1);
+  state.page = page;
+
+  const pageEntries = allEntries.slice(page * PROJECT_BROWSER_PAGE_SIZE, (page + 1) * PROJECT_BROWSER_PAGE_SIZE);
+  const text = buildProjectBrowserText(state, allEntries.length, totalPages);
+  const replyMarkup = buildProjectBrowserKeyboard(state, pageEntries, totalPages);
+
+  if (edit) {
+    try {
+      await ctx.editMessageText(text, { parse_mode: 'MarkdownV2', reply_markup: replyMarkup });
+      return;
+    } catch {
+      // fall through to send new message
+    }
+  }
+
+  await ctx.reply(text, { parse_mode: 'MarkdownV2', reply_markup: replyMarkup });
+}
+
+async function sendProjectManualPrompt(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const session = sessionManager.getSession(chatId);
+  const currentInfo = session
+    ? `\n\n_Current: ${esc(path.basename(session.workingDirectory))}_`
+    : '';
+
+  await ctx.reply(
+    `📁 *Set Project Directory*${currentInfo}\n\n👇 _Enter the path below:_`,
+    {
+      parse_mode: 'MarkdownV2',
+      reply_markup: {
+        force_reply: true,
+        input_field_placeholder: '/home/user/projects/myapp',
+        selective: true,
+      },
+    }
+  );
+}
+
+function getProjectState(chatId: number): ProjectBrowserState {
+  const root = getProjectRoot();
+  const existing = projectBrowserState.get(chatId);
+  if (existing && existing.root === root) {
+    if (!isWithinRoot(root, existing.current)) {
+      existing.current = root;
+      existing.page = 0;
+    }
+    return existing;
+  }
+
+  const session = sessionManager.getSession(chatId);
+  let initial = root;
+  if (session && isWithinRoot(root, session.workingDirectory)) {
+    initial = session.workingDirectory;
+  }
+
+  const state: ProjectBrowserState = {
+    root,
+    current: path.resolve(initial),
+    page: 0,
+  };
+  projectBrowserState.set(chatId, state);
+  return state;
+}
+
 export async function handleProject(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
@@ -292,27 +536,8 @@ export async function handleProject(ctx: Context): Promise<void> {
 
   // No args - prompt for input with ForceReply
   if (!args) {
-    const session = sessionManager.getSession(chatId);
-    const currentInfo = session
-      ? `\n\n_Current: ${esc(path.basename(session.workingDirectory))}_`
-      : '';
-
-    const projects = listProjects();
-    const projectList = projects.length > 0
-      ? `\n\n*Available:*\n${projects.slice(0, 10).map(p => `• \`${esc(p)}\``).join('\n')}`
-      : '';
-
-    await ctx.reply(
-      `📁 *Set Project Directory*${currentInfo}${projectList}\n\n👇 _Enter the path below:_`,
-      {
-        parse_mode: 'MarkdownV2',
-        reply_markup: {
-          force_reply: true,
-          input_field_placeholder: '/home/user/projects/myapp',
-          selective: true,
-        },
-      }
-    );
+    const state = getProjectState(chatId);
+    await sendProjectBrowser(ctx, state, false);
     return;
   }
 
@@ -1560,6 +1785,34 @@ export async function handleReddit(ctx: Context): Promise<void> {
   }
 
   await executeRedditFetch(ctx, args);
+}
+
+export async function handleVReddit(ctx: Context): Promise<void> {
+  const text = ctx.message?.text || '';
+  const args = text.split(' ').slice(1).join(' ').trim();
+
+  if (!args) {
+    await ctx.reply(
+      `🎬 *Reddit Video*\n\n` +
+      `Download a Reddit\\-hosted video from a post URL\\.\n\n` +
+      `*Examples:*\n` +
+      `• \`https://www.reddit.com/r/sub/comments/abc123/title/\`\n` +
+      `• \`https://www.reddit.com/r/sub/s/shareCode\`\n` +
+      `• \`https://redd.it/abc123\`\n\n` +
+      `👇 _Paste a Reddit post URL:_`,
+      {
+        parse_mode: 'MarkdownV2',
+        reply_markup: {
+          force_reply: true,
+          input_field_placeholder: 'https://www.reddit.com/r/sub/comments/abc123/',
+          selective: true,
+        },
+      }
+    );
+    return;
+  }
+
+  await executeVReddit(ctx, args);
 }
 
 // ── /transcribe command ────────────────────────────────────────────

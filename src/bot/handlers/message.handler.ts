@@ -14,6 +14,7 @@ import { isClaudeCommand } from '../../claude/command-parser.js';
 import { escapeMarkdownV2 } from '../../telegram/markdown.js';
 import { createTelegraphFromFile } from '../../telegram/telegraph.js';
 import { getStreamingMode, executeRedditFetch, executeMediumFetch } from './command.handler.js';
+import { executeVReddit } from '../../reddit/vreddit.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -21,6 +22,36 @@ import * as path from 'path';
 // Helper for MarkdownV2
 function esc(text: string): string {
   return escapeMarkdownV2(text);
+}
+
+function extractRedditUrl(text: string): string | null {
+  const matches = text.match(/https?:\/\/\S+/gi);
+  if (!matches) return null;
+  for (const match of matches) {
+    try {
+      const url = new URL(match);
+      if (url.hostname === 'reddit.com' || url.hostname.endsWith('.reddit.com') || url.hostname === 'redd.it' || url.hostname === 'v.redd.it') {
+        return match;
+      }
+    } catch {
+      // ignore malformed URLs
+    }
+  }
+  return null;
+}
+
+function getAutoVRedditUrl(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.startsWith('/')) return null;
+
+  const url = extractRedditUrl(trimmed);
+  if (!url) return null;
+
+  const tokens = trimmed.split(/\s+/);
+  const isSolo = tokens.length === 1;
+  const askedForVReddit = /\bvreddit\b|\bv\s*reddit\b/i.test(trimmed);
+
+  return isSolo || askedForVReddit ? url : null;
 }
 
 export async function handleMessage(ctx: Context): Promise<void> {
@@ -91,11 +122,23 @@ export async function handleMessage(ctx: Context): Promise<void> {
       return;
     }
 
+    // Handle Reddit video fetch reply
+    if (replyText.includes('Reddit Video')) {
+      await executeVReddit(ctx, text.trim());
+      return;
+    }
+
     // Handle medium fetch reply
     if (replyText.includes('Medium Fetch') || replyText.includes('Medium article')) {
       await executeMediumFetch(ctx, text.trim());
       return;
     }
+  }
+
+  const vRedditUrl = getAutoVRedditUrl(text);
+  if (vRedditUrl) {
+    await executeVReddit(ctx, vRedditUrl);
+    return;
   }
 
   // Skip if this is a Claude command (handled by command handler)

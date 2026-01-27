@@ -87,6 +87,11 @@ const envSchema = z.object({
     .string()
     .default('5')
     .transform((val) => parseInt(val, 10)),
+  // Reddit video download
+  REDDIT_VIDEO_MAX_SIZE_MB: z
+    .string()
+    .default('50')
+    .transform((val) => parseInt(val, 10)),
   // Medium / Freedium configuration
   MEDIUM_TIMEOUT_MS: z
     .string()

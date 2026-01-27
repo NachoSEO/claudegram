@@ -7,6 +7,7 @@ import {
   handleClearCallback,
   handleProject,
   handleNewProject,
+  handleProjectCallback,
   handleStatus,
   handleMode,
   handleModeCallback,
@@ -30,6 +31,7 @@ import {
   handleFile,
   handleTelegraph,
   handleReddit,
+  handleVReddit,
   handleMedium,
   handleMediumCallback,
   handleTranscribe,
@@ -64,6 +66,7 @@ export async function createBot(): Promise<Bot> {
     { command: 'sessions', description: '📚 View saved sessions' },
     { command: 'resume', description: '▶️ Resume a session' },
     { command: 'reddit', description: '📡 Fetch Reddit posts & subreddits' },
+    { command: 'vreddit', description: '🎬 Download Reddit video from post URL' },
     { command: 'medium', description: '📰 Fetch Medium articles' },
     { command: 'transcribe', description: '🎤 Transcribe audio to text' },
     { command: 'commands', description: '📜 List all commands' },
@@ -110,6 +113,7 @@ export async function createBot(): Promise<Bot> {
 
   // Reddit
   bot.command('reddit', handleReddit);
+  bot.command('vreddit', handleVReddit);
   bot.command('medium', handleMedium);
 
   // Transcribe
@@ -129,6 +133,8 @@ export async function createBot(): Promise<Bot> {
       await handleTTSCallback(ctx);
     } else if (data.startsWith('clear:')) {
       await handleClearCallback(ctx);
+    } else if (data.startsWith('project:')) {
+      await handleProjectCallback(ctx);
     } else if (data.startsWith('medium:')) {
       await handleMediumCallback(ctx);
     }

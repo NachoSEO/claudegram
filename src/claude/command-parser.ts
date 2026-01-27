@@ -66,6 +66,7 @@ export function getAvailableCommands(): string {
 *Reddit Commands:*
 
 • \`/reddit <target>\` \\- Fetch Reddit posts, subreddits, or user profiles
+• \`/vreddit <url>\` \\- Download Reddit\\-hosted video from a post URL
 
 *Medium Commands:*
 

@@ -132,6 +132,13 @@ Semantic mappings for natural language Reddit queries:
 - "this month" → --sort top --time month
 - "rising" → --sort rising`;
 
+const REDDIT_VIDEO_TOOL_PROMPT = `
+
+Reddit Video Tool:
+The user can download Reddit-hosted videos via the /vreddit Telegram command.
+If the user wants a video file, tell them to use /vreddit with the post URL.
+Do NOT use the Reddit Tool above to download media; it is for text/comments only.`;
+
 const MEDIUM_TOOL_PROMPT = `
 
 Medium Tool:
@@ -146,7 +153,7 @@ Reasoning Summary (required when enabled):
 - Do NOT reveal chain-of-thought, hidden reasoning, or sensitive tool outputs.
 - Skip the summary for very short acknowledgements or pure error messages.`;
 
-const SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}${MEDIUM_TOOL_PROMPT}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
+const SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}${REDDIT_VIDEO_TOOL_PROMPT}${MEDIUM_TOOL_PROMPT}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
 
 type LogLevel = 'off' | 'basic' | 'verbose' | 'trace';
 const LOG_LEVELS: Record<LogLevel, number> = {
