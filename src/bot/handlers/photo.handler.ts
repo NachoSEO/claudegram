@@ -160,7 +160,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
   const session = sessionManager.getSession(chatId);
   if (!session) {
     await ctx.reply(
-      '⚠️ No project set\.\n\nUse `/project` to open a project first\.',
+      '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project` to open a project first\\.',
       { parse_mode: 'MarkdownV2' }
     );
     return;
@@ -234,7 +234,7 @@ export async function handleImageDocument(ctx: Context): Promise<void> {
   const session = sessionManager.getSession(chatId);
   if (!session) {
     await ctx.reply(
-      '⚠️ No project set\.\n\nUse `/project` to open a project first\.',
+      '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project` to open a project first\\.',
       { parse_mode: 'MarkdownV2' }
     );
     return;

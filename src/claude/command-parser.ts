@@ -67,9 +67,20 @@ export function getAvailableCommands(): string {
 
 • \`/reddit <target>\` \\- Fetch Reddit posts, subreddits, or user profiles
 
+*Medium Commands:*
+
+• \`/medium <url>\` \\- Fetch Medium article with images
+
+*Audio Commands:*
+
+• \`/transcribe\` \\- Transcribe audio to text \\(reply to voice/audio, or ForceReply\\)
+
 *Bot Commands:*
 
 • \`/tts\` \\- Toggle voice replies
+• \`/context\` \\- Show Claude context usage
+• \`/botstatus\` \\- Show bot process status
+• \`/restartbot\` \\- Restart the bot process
 • \`/ping\` \\- Check if bot is responsive
 • \`/cancel\` \\- Cancel current request
 • \`/mode\` \\- Toggle streaming mode`;

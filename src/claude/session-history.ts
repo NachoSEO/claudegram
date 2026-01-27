@@ -4,6 +4,7 @@ import * as os from 'os';
 
 export interface SessionHistoryEntry {
   conversationId: string;
+  claudeSessionId?: string;
   projectPath: string;
   projectName: string;
   lastMessagePreview: string;
@@ -57,7 +58,8 @@ class SessionHistory {
     chatId: number,
     conversationId: string,
     projectPath: string,
-    lastMessagePreview: string = ''
+    lastMessagePreview: string = '',
+    claudeSessionId?: string
   ): void {
     if (!this.data.sessions[chatId]) {
       this.data.sessions[chatId] = [];
@@ -71,8 +73,10 @@ class SessionHistory {
       (entry) => entry.conversationId === conversationId
     );
 
+    const existingEntry = existingIndex >= 0 ? history[existingIndex] : undefined;
     const entry: SessionHistoryEntry = {
       conversationId,
+      claudeSessionId: claudeSessionId ?? existingEntry?.claudeSessionId,
       projectPath,
       projectName,
       lastMessagePreview: lastMessagePreview.substring(0, 100),
@@ -135,6 +139,18 @@ class SessionHistory {
     const entry = history.find((e) => e.conversationId === conversationId);
     if (entry) {
       entry.lastMessagePreview = preview.substring(0, 100);
+      entry.lastActivity = new Date().toISOString();
+      this.save();
+    }
+  }
+
+  updateClaudeSessionId(chatId: number, conversationId: string, claudeSessionId: string): void {
+    const history = this.data.sessions[chatId];
+    if (!history) return;
+
+    const entry = history.find((e) => e.conversationId === conversationId);
+    if (entry) {
+      entry.claudeSessionId = claudeSessionId;
       entry.lastActivity = new Date().toISOString();
       this.save();
     }

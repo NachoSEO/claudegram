@@ -12,6 +12,9 @@ import {
   handleModeCallback,
   handleTTS,
   handleTTSCallback,
+  handleBotStatus,
+  handleRestartBot,
+  handleContext,
   handlePing,
   handleCancel,
   handleCommands,
@@ -27,6 +30,11 @@ import {
   handleFile,
   handleTelegraph,
   handleReddit,
+  handleMedium,
+  handleMediumCallback,
+  handleTranscribe,
+  handleTranscribeAudio,
+  handleTranscribeDocument,
 } from './handlers/command.handler.js';
 import { handleMessage } from './handlers/message.handler.js';
 import { handleVoice } from './handlers/voice.handler.js';
@@ -47,12 +55,17 @@ export async function createBot(): Promise<Bot> {
     { command: 'model', description: '🤖 Switch AI model' },
     { command: 'mode', description: '⚙️ Toggle streaming mode' },
     { command: 'tts', description: '🔊 Toggle voice replies' },
+    { command: 'botstatus', description: '🩺 Show bot process status' },
+    { command: 'restartbot', description: '🔁 Restart the bot' },
+    { command: 'context', description: '🧠 Show Claude context usage' },
     { command: 'plan', description: '📋 Start planning mode' },
     { command: 'explore', description: '🔍 Explore codebase' },
     { command: 'loop', description: '🔄 Run in loop mode' },
     { command: 'sessions', description: '📚 View saved sessions' },
     { command: 'resume', description: '▶️ Resume a session' },
     { command: 'reddit', description: '📡 Fetch Reddit posts & subreddits' },
+    { command: 'medium', description: '📰 Fetch Medium articles' },
+    { command: 'transcribe', description: '🎤 Transcribe audio to text' },
     { command: 'commands', description: '📜 List all commands' },
   ]).then(() => {
     console.log('📋 Command menu registered');
@@ -71,6 +84,9 @@ export async function createBot(): Promise<Bot> {
   bot.command('status', handleStatus);
   bot.command('mode', handleMode);
   bot.command('tts', handleTTS);
+  bot.command('botstatus', handleBotStatus);
+  bot.command('restartbot', handleRestartBot);
+  bot.command('context', handleContext);
 
   // New commands
   bot.command('ping', handlePing);
@@ -94,6 +110,10 @@ export async function createBot(): Promise<Bot> {
 
   // Reddit
   bot.command('reddit', handleReddit);
+  bot.command('medium', handleMedium);
+
+  // Transcribe
+  bot.command('transcribe', handleTranscribe);
 
   // Callback query handler for inline keyboards
   bot.on('callback_query:data', async (ctx) => {
@@ -109,15 +129,35 @@ export async function createBot(): Promise<Bot> {
       await handleTTSCallback(ctx);
     } else if (data.startsWith('clear:')) {
       await handleClearCallback(ctx);
+    } else if (data.startsWith('medium:')) {
+      await handleMediumCallback(ctx);
     }
   });
 
   // Handle voice messages
   bot.on('message:voice', handleVoice);
 
+  // Handle audio messages (music/audio files — separate from voice notes)
+  bot.on('message:audio', handleTranscribeAudio);
+
   // Handle images
   bot.on('message:photo', handlePhoto);
-  bot.on('message:document', handleImageDocument);
+
+  // Handle documents: check for audio transcribe ForceReply first, then image documents
+  bot.on('message:document', async (ctx) => {
+    // Try transcribe-document path first (audio MIME + reply to ForceReply)
+    const replyTo = ctx.message?.reply_to_message;
+    const doc = ctx.message?.document;
+    if (replyTo && replyTo.from?.is_bot && doc?.mime_type?.startsWith('audio/')) {
+      const replyText = (replyTo as { text?: string }).text || '';
+      if (replyText.includes('Transcribe Audio')) {
+        await handleTranscribeDocument(ctx);
+        return;
+      }
+    }
+    // Fall through to image document handler
+    await handleImageDocument(ctx);
+  });
 
   // Handle regular text messages
   bot.on('message:text', handleMessage);

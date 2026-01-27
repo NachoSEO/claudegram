@@ -1,4 +1,4 @@
-import { Context } from 'grammy';
+import { Context, InputFile } from 'grammy';
 import { sessionManager } from '../../claude/session-manager.js';
 import {
   clearConversation,
@@ -19,13 +19,17 @@ import {
   queueRequest,
   setAbortController,
 } from '../../claude/request-queue.js';
-import { createTelegraphFromFile } from '../../telegram/telegraph.js';
+import { createTelegraphFromFile, createTelegraphPage } from '../../telegram/telegraph.js';
+import { isMediumUrl, fetchMediumArticle, FreediumArticle } from '../../medium/freedium.js';
 import { escapeMarkdownV2 } from '../../telegram/markdown.js';
 import { getTTSSettings, setTTSEnabled, setTTSVoice } from '../../tts/tts-settings.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
+import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { execFile } from 'child_process';
+import { fileURLToPath } from 'url';
+import { execFile, spawn } from 'child_process';
 
 // Helper for consistent MarkdownV2 replies
 async function replyMd(ctx: Context, text: string): Promise<void> {
@@ -43,7 +47,123 @@ const TTS_VOICES = [
   'sage', 'shimmer', 'verse', 'marin', 'cedar',
 ] as const;
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, '../../..');
+const BOTCTL_PATH = path.join(PROJECT_ROOT, 'scripts', 'claudegram-botctl.sh');
+
+function botctlExists(): boolean {
+  return fs.existsSync(BOTCTL_PATH);
+}
+
+function runBotCtl(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      BOTCTL_PATH,
+      args,
+      { cwd: PROJECT_ROOT, env: { ...process.env, MODE: config.BOT_MODE } },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error((stderr || error.message).trim()));
+          return;
+        }
+        resolve({ stdout: stdout || '', stderr: stderr || '' });
+      }
+    );
+  });
+}
+
 type TTSMenuMode = 'main' | 'voices';
+
+function parseContextOutput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return '⚠️ No context output received.';
+  }
+
+  const lines = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  let model = '';
+  let tokensLine = '';
+  const categories: Array<{ name: string; tokens: string; percent: string }> = [];
+  let inCategories = false;
+
+  for (const line of lines) {
+    if (/^model:/i.test(line)) {
+      model = line.replace(/^model:/i, '').trim();
+      continue;
+    }
+    if (/^tokens:/i.test(line)) {
+      tokensLine = line.replace(/^tokens:/i, '').trim();
+      continue;
+    }
+    if (/estimated usage by category/i.test(line)) {
+      inCategories = true;
+      continue;
+    }
+    if (inCategories) {
+      if (/^category/i.test(line)) continue;
+      if (/^-+$/.test(line)) continue;
+
+      const match = line.match(/^(.+?)\s{2,}([0-9.,kKmM]+)\s+([0-9.,]+%)$/);
+      if (match) {
+        categories.push({ name: match[1].trim(), tokens: match[2], percent: match[3] });
+        continue;
+      }
+
+      const parts = line.split(/\s+/);
+      if (parts.length >= 3 && parts[parts.length - 1].endsWith('%')) {
+        const percent = parts.pop() as string;
+        const tokens = parts.pop() as string;
+        const name = parts.join(' ');
+        categories.push({ name, tokens, percent });
+      }
+    }
+  }
+
+  if (!model && !tokensLine && categories.length === 0) {
+    return `## 🧠 Context Usage\n\n\`\`\`\n${trimmed}\n\`\`\``;
+  }
+
+  let output = '## 🧠 Context Usage';
+  if (model) output += `\n- **Model:** ${model}`;
+  if (tokensLine) output += `\n- **Tokens:** ${tokensLine}`;
+
+  if (categories.length > 0) {
+    output += '\n\n### Estimated usage by category';
+    for (const category of categories) {
+      output += `\n- **${category.name}:** ${category.tokens} (${category.percent})`;
+    }
+  }
+
+  output += '\n\n_If this looks stale, send a new message then run /context again._';
+  return output;
+}
+
+async function runClaudeContext(sessionId: string, cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      config.CLAUDE_EXECUTABLE_PATH,
+      ['-p', '--resume', sessionId, '/context'],
+      {
+        cwd,
+        timeout: 20_000,
+        maxBuffer: 1024 * 1024,
+        env: process.env,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const message = (stderr || error.message).trim();
+          reject(new Error(message || 'Failed to run /context'));
+          return;
+        }
+        resolve((stdout || stderr || '').trim());
+      }
+    );
+  });
+}
 
 function buildTTSMenu(chatId: number, mode: TTSMenuMode) {
   const settings = getTTSSettings(chatId);
@@ -440,7 +560,12 @@ export async function handleTTSCallback(ctx: Context): Promise<void> {
   if (!data || !data.startsWith('tts:')) return;
 
   if (data === 'tts:on') {
-    setTTSEnabled(chatId, true);
+    if (!config.OPENAI_API_KEY) {
+      await ctx.answerCallbackQuery({ text: 'OPENAI_API_KEY missing. Set it in .env and restart.' });
+      setTTSEnabled(chatId, false);
+    } else {
+      setTTSEnabled(chatId, true);
+    }
   } else if (data === 'tts:off') {
     setTTSEnabled(chatId, false);
   } else if (data.startsWith('tts:voice:')) {
@@ -465,6 +590,87 @@ export async function handleTTSCallback(ctx: Context): Promise<void> {
 export async function handlePing(ctx: Context): Promise<void> {
   const uptime = getUptimeFormatted();
   await replyMd(ctx, `🏓 Pong\\!\n\nUptime: ${esc(uptime)}`);
+}
+
+export async function handleContext(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const session = sessionManager.getSession(chatId);
+  if (!session) {
+    await ctx.reply(
+      '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project` to open a project first\\.',
+      { parse_mode: 'MarkdownV2' }
+    );
+    return;
+  }
+
+  if (!session.claudeSessionId) {
+    await replyMd(
+      ctx,
+      '⚠️ No Claude session ID found\\.\n\nSend a message to Claude after resuming, then run `/context` again\\.'
+    );
+    return;
+  }
+
+  const ack = await ctx.reply('🧠 Checking context...', { parse_mode: undefined });
+
+  try {
+    const raw = await runClaudeContext(session.claudeSessionId, session.workingDirectory);
+    const formatted = parseContextOutput(raw);
+    await messageSender.sendMessage(ctx, formatted);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    const hint = message.toLowerCase().includes('unknown') || message.toLowerCase().includes('command')
+      ? '\n\nThis CLI may not support `/context` yet.'
+      : '';
+    await messageSender.sendMessage(ctx, `❌ Failed to fetch context: ${message}${hint}`);
+  } finally {
+    try {
+      await ctx.api.deleteMessage(chatId, ack.message_id);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+export async function handleBotStatus(ctx: Context): Promise<void> {
+  if (!botctlExists()) {
+    await replyMd(ctx, '❌ Bot control script not found\\.\n\nExpected at `scripts/claudegram-botctl.sh`\\.');
+    return;
+  }
+
+  try {
+    const { stdout, stderr } = await runBotCtl(['status']);
+    const output = (stdout || stderr || 'No output').trim();
+    await ctx.reply(`Bot status (${config.BOT_MODE}):\\n${output}`, { parse_mode: undefined });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    await ctx.reply(`Bot status error (${config.BOT_MODE}):\\n${errorMessage}`, { parse_mode: undefined });
+  }
+}
+
+export async function handleRestartBot(ctx: Context): Promise<void> {
+  if (!botctlExists()) {
+    await replyMd(ctx, '❌ Bot control script not found\\.\n\nExpected at `scripts/claudegram-botctl.sh`\\.');
+    return;
+  }
+
+  await replyMd(
+    ctx,
+    '🔁 Restarting bot\\.\n\nAfter it comes back, use `/continue` or `/resume` to restore your session\\.'
+  );
+
+  try {
+    const child = spawn(
+      BOTCTL_PATH,
+      ['recover'],
+      { cwd: PROJECT_ROOT, detached: true, stdio: 'ignore', env: { ...process.env, MODE: config.BOT_MODE } }
+    );
+    child.unref();
+  } catch (error) {
+    console.error('[BotCtl] Failed to restart:', error);
+  }
 }
 
 export async function handleCancel(ctx: Context): Promise<void> {
@@ -560,7 +766,7 @@ export async function handlePlan(ctx: Context): Promise<void> {
 
   const session = sessionManager.getSession(chatId);
   if (!session) {
-    await replyMd(ctx, '⚠️ No project set\\.\n\nUse `/project` to open a project first\\.');
+    await replyMd(ctx, '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project` to open a project first\\.');
     return;
   }
 
@@ -618,7 +824,7 @@ export async function handleExplore(ctx: Context): Promise<void> {
 
   const session = sessionManager.getSession(chatId);
   if (!session) {
-    await replyMd(ctx, '⚠️ No project set\\.\n\nUse `/project` to open a project first\\.');
+    await replyMd(ctx, '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project` to open a project first\\.');
     return;
   }
 
@@ -751,7 +957,7 @@ export async function handleLoop(ctx: Context): Promise<void> {
 
   const session = sessionManager.getSession(chatId);
   if (!session) {
-    await replyMd(ctx, '⚠️ No project set\\.\n\nUse `/project` to open a project first\\.');
+    await replyMd(ctx, '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project` to open a project first\\.');
     return;
   }
 
@@ -858,7 +1064,7 @@ export async function handleFile(ctx: Context): Promise<void> {
 
   const session = sessionManager.getSession(chatId);
   if (!session) {
-    await replyMd(ctx, '⚠️ No project set\\. Use `/project <path>` first\\.');
+    await replyMd(ctx, '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project <path>` to open a project first\\.');
     return;
   }
 
@@ -913,7 +1119,7 @@ export async function handleTelegraph(ctx: Context): Promise<void> {
 
   const session = sessionManager.getSession(chatId);
   if (!session) {
-    await replyMd(ctx, '⚠️ No project set\\. Use `/project <path>` first\\.');
+    await replyMd(ctx, '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project <path>` to open a project first\\.');
     return;
   }
 
@@ -1030,6 +1236,22 @@ function buildRedditOutputPath(ctx: Context, tokens: string[]): string {
   return path.join(dir, `reddit_${slug}_${stamp}.json`);
 }
 
+function slugFromUrl(input: string): string {
+  const cleaned = input.replace(/^https?:\/\//, '').replace(/[^a-zA-Z0-9_-]+/g, '_');
+  return cleaned.slice(0, 60) || 'medium';
+}
+
+function ensureMediumOutputDir(ctx: Context, url: string): string {
+  const chatId = ctx.chat?.id;
+  const session = chatId ? sessionManager.getSession(chatId) : null;
+  const baseDir = session ? session.workingDirectory : process.cwd();
+  const slug = slugFromUrl(url);
+  const dir = path.join(baseDir, '.claudegram', 'medium', slug);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+
 async function runRedditFetch(
   ctx: Context,
   scriptPath: string,
@@ -1145,6 +1367,172 @@ export async function executeRedditFetch(
   }
 }
 
+// Pending Freedium results keyed by chatId, with 5-min TTL
+const pendingMediumResults = new Map<number, { article: FreediumArticle; messageId: number; expiresAt: number }>();
+const MEDIUM_RESULT_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Fetch a Medium article via Freedium and present inline action buttons.
+ */
+export async function executeMediumFetch(
+  ctx: Context,
+  args: string
+): Promise<void> {
+  await ctx.replyWithChatAction('typing');
+
+  const url = args.trim().split(/\s+/)[0];
+
+  if (!url) {
+    await replyMd(ctx, '❌ Missing URL\\. Example: `/medium https://medium.com/...`');
+    return;
+  }
+
+  if (!isMediumUrl(url)) {
+    await replyMd(ctx, '❌ Not a recognized Medium URL\\.\n\nSupported: medium\\.com, towardsdatascience\\.com, and other known Medium publication domains\\.');
+    return;
+  }
+
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  try {
+    const article = await fetchMediumArticle(url);
+
+    // Build preview: title + author + first ~200 chars of markdown
+    const preview = article.markdown.length > 200
+      ? article.markdown.slice(0, 200).trimEnd() + '...'
+      : article.markdown;
+
+    const previewText =
+      `📰 *${esc(article.title)}*\n` +
+      `_by ${esc(article.author)}_\n\n` +
+      `${esc(preview)}\n\n` +
+      `_${article.markdown.length} chars — choose an action:_`;
+
+    const msg = await ctx.reply(previewText, {
+      parse_mode: 'MarkdownV2',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '📄 Telegraph', callback_data: 'medium:telegraph' },
+            { text: '💾 Save .md', callback_data: 'medium:save' },
+            { text: '📄💾 Both', callback_data: 'medium:both' },
+          ],
+        ],
+      },
+    });
+
+    // Store result for callback handling
+    pendingMediumResults.set(chatId, {
+      article,
+      messageId: msg.message_id,
+      expiresAt: Date.now() + MEDIUM_RESULT_TTL_MS,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    await replyMd(ctx, `❌ Medium fetch failed: ${esc(message.substring(0, 300))}`);
+  }
+}
+
+/**
+ * Handle inline keyboard callbacks for Medium article actions.
+ */
+export async function handleMediumCallback(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith('medium:')) return;
+
+  const action = data.replace('medium:', '');
+
+  // Look up pending result
+  const pending = pendingMediumResults.get(chatId);
+  if (!pending || Date.now() > pending.expiresAt) {
+    pendingMediumResults.delete(chatId);
+    await ctx.answerCallbackQuery({ text: 'Result expired. Please fetch again.' });
+    return;
+  }
+
+  const { article } = pending;
+  await ctx.answerCallbackQuery();
+
+  const doTelegraph = action === 'telegraph' || action === 'both';
+  const doSave = action === 'save' || action === 'both';
+
+  let telegraphUrl: string | null = null;
+  let mdPath: string | null = null;
+
+  try {
+    if (doTelegraph) {
+      telegraphUrl = await createTelegraphPage(article.title, article.markdown);
+    }
+
+    if (doSave) {
+      const outputDir = ensureMediumOutputDir(ctx, article.url);
+      const slug = slugFromUrl(article.url);
+      mdPath = path.join(outputDir, `${slug}.md`);
+      fs.writeFileSync(mdPath, article.markdown, 'utf-8');
+    }
+
+    // Build result message
+    let resultText = `📰 *${esc(article.title)}*\n_by ${esc(article.author)}_\n\n`;
+
+    if (telegraphUrl) {
+      resultText += `📄 [Open in Instant View](${esc(telegraphUrl)})\n`;
+    }
+    if (mdPath) {
+      resultText += `💾 Markdown saved \\(${article.markdown.length} chars\\)`;
+    }
+
+    // Edit the original message to show results
+    try {
+      await ctx.editMessageText(resultText, { parse_mode: 'MarkdownV2' });
+    } catch {
+      // If edit fails (e.g. message too old), send new message
+      await replyMd(ctx, resultText);
+    }
+
+    // Send .md file as document
+    if (mdPath) {
+      await messageSender.sendDocument(ctx, mdPath, `📎 ${path.basename(mdPath)}`);
+    }
+
+    // Clean up pending result
+    pendingMediumResults.delete(chatId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    await replyMd(ctx, `❌ Action failed: ${esc(message.substring(0, 300))}`);
+  }
+}
+
+export async function handleMedium(ctx: Context): Promise<void> {
+  const text = ctx.message?.text || '';
+  const args = text.split(' ').slice(1).join(' ').trim();
+
+  if (!args) {
+    await ctx.reply(
+      `📰 *Medium Fetch*\n\n` +
+      `Fetch a Medium article via Freedium and convert to Markdown\\.\n\n` +
+      `*Examples:*\n` +
+      `• \`https://medium.com/@user/post\\-id\`\n` +
+      `• \`https://towardsdatascience.com/some\\-article\`\n\n` +
+      `👇 _Paste a Medium article URL:_`,
+      {
+        parse_mode: 'MarkdownV2',
+        reply_markup: {
+          force_reply: true,
+          input_field_placeholder: 'https://medium.com/@user/post-id',
+          selective: true,
+        },
+      }
+    );
+    return;
+  }
+
+  await executeMediumFetch(ctx, args);
+}
+
 export async function handleReddit(ctx: Context): Promise<void> {
   const text = ctx.message?.text || '';
   const args = text.split(' ').slice(1).join(' ').trim();
@@ -1172,4 +1560,142 @@ export async function handleReddit(ctx: Context): Promise<void> {
   }
 
   await executeRedditFetch(ctx, args);
+}
+
+// ── /transcribe command ────────────────────────────────────────────
+
+/**
+ * Send a transcript as text (short) or .txt document (long).
+ * Exported so voice.handler.ts can reuse it for the ForceReply path.
+ */
+export async function sendTranscriptResult(ctx: Context, transcript: string): Promise<void> {
+  if (transcript.length <= config.TRANSCRIBE_FILE_THRESHOLD_CHARS) {
+    await messageSender.sendMessage(ctx, transcript);
+  } else {
+    const tmpPath = path.join(os.tmpdir(), `claudegram_transcript_${Date.now()}.txt`);
+    try {
+      fs.writeFileSync(tmpPath, transcript, 'utf-8');
+      const inputFile = new InputFile(fs.readFileSync(tmpPath), 'transcript.txt');
+      await ctx.replyWithDocument(inputFile, {
+        caption: `🎤 Transcript (${transcript.length} chars)`,
+      });
+    } finally {
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Download a Telegram file by file_id → transcribe → send result.
+ * Shared helper for reply-to and ForceReply paths.
+ */
+async function transcribeAndSend(
+  ctx: Context,
+  fileId: string,
+  mimeHint?: string
+): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const ackMsg = await ctx.reply('🎤 Transcribing...', { parse_mode: undefined });
+  let tempFilePath: string | null = null;
+
+  try {
+    const file = await ctx.api.getFile(fileId);
+    if (!file.file_path) throw new Error('Telegram did not return file_path.');
+
+    const ext = mimeHint?.includes('ogg') ? '.ogg'
+      : mimeHint?.includes('mp3') ? '.mp3'
+      : mimeHint?.includes('wav') ? '.wav'
+      : mimeHint?.includes('mp4') ? '.m4a'
+      : '.oga';
+    tempFilePath = path.join(os.tmpdir(), `claudegram_transcribe_${Date.now()}${ext}`);
+
+    await downloadTelegramAudio(config.TELEGRAM_BOT_TOKEN, file.file_path, tempFilePath);
+
+    const buf = fs.readFileSync(tempFilePath);
+    if (!buf.length) throw new Error('Downloaded empty audio file.');
+
+    const transcript = await transcribeFile(tempFilePath);
+
+    // Remove ack
+    try { await ctx.api.deleteMessage(chatId, ackMsg.message_id); } catch { /* ignore */ }
+
+    await sendTranscriptResult(ctx, transcript);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Transcribe] Error:', error);
+    try {
+      await ctx.api.editMessageText(chatId, ackMsg.message_id, `❌ ${errorMessage}`, { parse_mode: undefined });
+    } catch {
+      await ctx.reply(`❌ Transcription error: ${esc(errorMessage)}`, { parse_mode: 'MarkdownV2' });
+    }
+  } finally {
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try { fs.unlinkSync(tempFilePath); } catch { /* ignore */ }
+    }
+  }
+}
+
+export async function handleTranscribe(ctx: Context): Promise<void> {
+  // Path A: reply to a voice/audio/audio-document message
+  const reply = ctx.message?.reply_to_message;
+  if (reply) {
+    const voice = (reply as { voice?: { file_id: string; mime_type?: string } }).voice;
+    const audio = (reply as { audio?: { file_id: string; mime_type?: string } }).audio;
+    const doc = (reply as { document?: { file_id: string; mime_type?: string } }).document;
+
+    const fileId = voice?.file_id
+      || audio?.file_id
+      || (doc?.mime_type?.startsWith('audio/') ? doc.file_id : null);
+    const mime = voice?.mime_type || audio?.mime_type || doc?.mime_type;
+
+    if (fileId) {
+      await transcribeAndSend(ctx, fileId, mime);
+      return;
+    }
+  }
+
+  // Path B: no audio attached — send ForceReply prompt
+  await ctx.reply(
+    '🎤 *Transcribe Audio*\n\n_Send a voice note or audio file:_',
+    {
+      parse_mode: 'MarkdownV2',
+      reply_markup: {
+        force_reply: true,
+        input_field_placeholder: 'Send a voice note or audio file',
+        selective: true,
+      },
+    }
+  );
+}
+
+/**
+ * Handle audio messages (message:audio) sent as reply to the Transcribe ForceReply.
+ */
+export async function handleTranscribeAudio(ctx: Context): Promise<void> {
+  const replyTo = ctx.message?.reply_to_message;
+  if (!replyTo || !replyTo.from?.is_bot) return;
+  const replyText = (replyTo as { text?: string }).text || '';
+  if (!replyText.includes('Transcribe Audio')) return;
+
+  const audio = ctx.message?.audio;
+  if (!audio) return;
+
+  await transcribeAndSend(ctx, audio.file_id, audio.mime_type);
+}
+
+/**
+ * Handle document messages with audio MIME sent as reply to the Transcribe ForceReply.
+ */
+export async function handleTranscribeDocument(ctx: Context): Promise<void> {
+  const replyTo = ctx.message?.reply_to_message;
+  if (!replyTo || !replyTo.from?.is_bot) return;
+  const replyText = (replyTo as { text?: string }).text || '';
+  if (!replyText.includes('Transcribe Audio')) return;
+
+  const doc = ctx.message?.document;
+  if (!doc || !doc.mime_type?.startsWith('audio/')) return;
+
+  await transcribeAndSend(ctx, doc.file_id, doc.mime_type);
 }

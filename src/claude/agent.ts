@@ -1,4 +1,4 @@
-import { query, type SDKMessage } from '@anthropic-ai/claude-code';
+import { query, type SDKMessage, type PermissionMode, type SettingSource, type HookEvent, type HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 import { sessionManager } from './session-manager.js';
 import { config } from '../config.js';
 
@@ -32,12 +32,67 @@ const chatSessionIds: Map<number, string> = new Map();
 // Track current model per chat (default: sonnet)
 const chatModels: Map<number, string> = new Map();
 
-const SYSTEM_PROMPT = `You are ${config.BOT_NAME}, an AI assistant helping via Telegram.
+const BASE_SYSTEM_PROMPT = `You are ${config.BOT_NAME}, an AI assistant helping via Telegram.
 
 Guidelines:
 - Show relevant code snippets when helpful, but keep them short
 - If a task requires multiple steps, execute them and summarize what you did
 - When you can't do something, explain why briefly
+
+Response Formatting — Telegraph-Aware Writing:
+Your responses are displayed via Telegram. Short responses render inline as MarkdownV2.
+Longer responses (2500+ chars) are published as Telegraph (telegra.ph) Instant View pages.
+You MUST write with Telegraph's rendering constraints in mind at all times.
+
+Telegraph supports ONLY these elements:
+- Headings: h3 (from # and ##) and h4 (from ### and ####). No h1, h2, h5, h6.
+- Text formatting: **bold**, *italic*, ~~strikethrough~~, \`inline code\`
+- Links: [text](url)
+- Lists: unordered (- item) and ordered (1. item). Nested lists are supported (indent sub-items).
+- Code blocks: \`\`\`code\`\`\` — rendered as monospace preformatted text. No syntax highlighting.
+- Blockquotes: > text
+- Horizontal rules: ---
+
+Telegraph does NOT support:
+- TABLES — pipe-delimited markdown tables (|col|col|) will NOT render as tables. They break into ugly labeled text. NEVER use markdown tables.
+- No checkboxes, footnotes, or task lists
+- No custom colors, fonts, or inline styles
+- Only two heading levels (h3, h4)
+
+Instead of tables, use these alternatives (in order of preference):
+1. Bullet lists with bold labels — best for key-value data or comparisons:
+   - **Name**: Alice
+   - **Age**: 30
+   - **City**: NYC
+
+2. Nested lists — best for grouped/categorized data:
+   - **Frontend**
+     - React 18
+     - TypeScript
+   - **Backend**
+     - Node.js
+     - Express
+
+3. Bold headers with list items — best for feature/comparison matrices:
+   **Telegram bot** — Grammy v1.31
+   **AI agent** — Claude Code SDK v1.0
+   **TTS** — OpenAI gpt-4o-mini-tts
+
+4. Preformatted code blocks — ONLY for data where alignment matters (ASCII tables):
+   \`\`\`
+   Name      Age   City
+   Alice     30    NYC
+   Bob       25    London
+   \`\`\`
+   Note: code blocks lose all formatting (no bold, links, etc.) so only use when alignment is critical.
+
+Structure guidelines for long responses:
+- Use ## or ### headings to create clear sections (renders as h3/h4)
+- Use --- horizontal rules to separate major sections
+- Use bullet lists liberally — they render cleanly
+- Use > blockquotes for callouts, warnings, or important notes
+- Keep paragraphs concise; Telegraph renders best with short blocks of text
+- Nest sub-items under list items for tree-like structures instead of indented text
 
 Reddit Tool:
 You have access to a Reddit fetching tool via Bash.
@@ -77,7 +132,43 @@ Semantic mappings for natural language Reddit queries:
 - "this month" → --sort top --time month
 - "rising" → --sort rising`;
 
-type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+const MEDIUM_TOOL_PROMPT = `
+
+Medium Tool:
+The user can fetch Medium articles via the /medium Telegram command (uses Freedium).
+You do NOT need to fetch Medium articles yourself — the bot handles it directly.`;
+
+const REASONING_SUMMARY_INSTRUCTIONS = `
+
+Reasoning Summary (required when enabled):
+- At the end of each response, add a short section titled "Reasoning Summary".
+- Provide 2–5 bullet points describing high-level actions/decisions taken.
+- Do NOT reveal chain-of-thought, hidden reasoning, or sensitive tool outputs.
+- Skip the summary for very short acknowledgements or pure error messages.`;
+
+const SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}${MEDIUM_TOOL_PROMPT}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
+
+type LogLevel = 'off' | 'basic' | 'verbose' | 'trace';
+const LOG_LEVELS: Record<LogLevel, number> = {
+  off: 0,
+  basic: 1,
+  verbose: 2,
+  trace: 3,
+};
+
+function getLogLevel(): LogLevel {
+  return config.CLAUDE_SDK_LOG_LEVEL as LogLevel;
+}
+
+function logAt(level: LogLevel, message: string, data?: unknown): void {
+  if (LOG_LEVELS[level] <= LOG_LEVELS[getLogLevel()]) {
+    if (data !== undefined) {
+      console.log(message, data);
+    } else {
+      console.log(message);
+    }
+  }
+}
 
 function getPermissionMode(command?: string): PermissionMode {
   // If DANGEROUS_MODE is enabled, bypass all permissions
@@ -136,30 +227,94 @@ export async function sendToAgent(
   try {
     const controller = abortController || new AbortController();
 
-    const existingSessionId = chatSessionIds.get(chatId);
+    const existingSessionId = chatSessionIds.get(chatId) || session.claudeSessionId;
+
+    // Log session resume if applicable
+    if (existingSessionId) {
+      if (!chatSessionIds.get(chatId)) {
+        chatSessionIds.set(chatId, existingSessionId);
+      }
+      logAt('basic', `[Claude] Resuming session ${existingSessionId} for chat ${chatId}`);
+    }
+
+    const toolsOption = config.DANGEROUS_MODE
+      ? { type: 'preset' as const, preset: 'claude_code' as const }
+      : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'];
+
+    const allowedToolsOption = config.DANGEROUS_MODE
+      ? undefined
+      : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'];
+
+    const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> | undefined =
+      LOG_LEVELS[getLogLevel()] >= LOG_LEVELS.verbose
+        ? {
+          PreToolUse: [{
+            hooks: [async (input) => {
+              logAt('verbose', '[Hook] PreToolUse', input);
+              return { continue: true };
+            }],
+          }],
+          PostToolUse: [{
+            hooks: [async (input) => {
+              logAt('verbose', '[Hook] PostToolUse', input);
+              return { continue: true };
+            }],
+          }],
+          PostToolUseFailure: [{
+            hooks: [async (input) => {
+              logAt('verbose', '[Hook] PostToolUseFailure', input);
+              return { continue: true };
+            }],
+          }],
+          PermissionRequest: [{
+            hooks: [async (input) => {
+              logAt('verbose', '[Hook] PermissionRequest', input);
+              return { continue: true };
+            }],
+          }],
+          SessionStart: [{
+            hooks: [async (input) => {
+              logAt('basic', '[Hook] SessionStart', input);
+              return { continue: true };
+            }],
+          }],
+          SessionEnd: [{
+            hooks: [async (input) => {
+              logAt('basic', '[Hook] SessionEnd', input);
+              return { continue: true };
+            }],
+          }],
+          Notification: [{
+            hooks: [async (input) => {
+              logAt('verbose', '[Hook] Notification', input);
+              return { continue: true };
+            }],
+          }],
+        }
+        : undefined;
 
     const queryOptions: Parameters<typeof query>[0]['options'] = {
       cwd: session.workingDirectory,
-      allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'],
+      tools: toolsOption,
+      ...(allowedToolsOption ? { allowedTools: allowedToolsOption } : {}),
       permissionMode,
       abortController: controller,
-      pathToClaudeCodeExecutable: config.CLAUDE_EXECUTABLE_PATH,
-      appendSystemPrompt: SYSTEM_PROMPT,
+      systemPrompt: {
+        type: 'preset' as const,
+        preset: 'claude_code' as const,
+        append: SYSTEM_PROMPT,
+      },
+      settingSources: ['project', 'user'] as SettingSource[],
+      model: effectiveModel,
+      resume: existingSessionId,
+      ...(permissionMode === 'bypassPermissions' ? { allowDangerouslySkipPermissions: true } : {}),
+      ...(config.CLAUDE_USE_BUNDLED_EXECUTABLE ? {} : { pathToClaudeCodeExecutable: config.CLAUDE_EXECUTABLE_PATH }),
+      includePartialMessages: config.CLAUDE_SDK_INCLUDE_PARTIAL || getLogLevel() === 'trace',
+      hooks,
       stderr: (data: string) => {
         console.error('[Claude stderr]:', data);
       },
     };
-
-    // Resume existing session for conversation continuity
-    if (existingSessionId) {
-      queryOptions.resume = existingSessionId;
-      console.log(`[Claude] Resuming session ${existingSessionId} for chat ${chatId}`);
-    }
-
-    // Add model if specified
-    if (effectiveModel) {
-      (queryOptions as Record<string, unknown>).model = effectiveModel;
-    }
 
     const response = await query({
       prompt,
@@ -174,12 +329,12 @@ export async function sendToAgent(
         break;
       }
 
-      console.log('[Claude] Message type:', responseMessage.type);
+      logAt('trace', '[Claude] Message type:', responseMessage.type);
 
       if (responseMessage.type === 'assistant') {
-        console.log('[Claude] Assistant content blocks:', responseMessage.message.content.length);
+        logAt('verbose', '[Claude] Assistant content blocks:', responseMessage.message.content.length);
         for (const block of responseMessage.message.content) {
-          console.log('[Claude] Block type:', block.type);
+          logAt('trace', '[Claude] Block type:', block.type);
           if (block.type === 'text') {
             fullText += block.text;
             onProgress?.(fullText);
@@ -192,18 +347,29 @@ export async function sendToAgent(
                 : toolInput.file_path
                   ? String(toolInput.file_path)
                   : '';
-            console.log(`[Claude] Tool: ${block.name}${inputSummary ? ` → ${inputSummary}` : ''}`);
+            logAt('verbose', `[Claude] Tool: ${block.name}${inputSummary ? ` → ${inputSummary}` : ''}`);
             toolsUsed.push(block.name);
           }
         }
+      } else if (responseMessage.type === 'system') {
+        logAt('verbose', `[Claude] System: ${responseMessage.subtype ?? 'unknown'}`, responseMessage);
+      } else if (responseMessage.type === 'tool_progress') {
+        logAt('verbose', `[Claude] Tool progress: ${responseMessage.tool_name}`, responseMessage);
+      } else if (responseMessage.type === 'tool_use_summary') {
+        logAt('verbose', '[Claude] Tool use summary', responseMessage);
+      } else if (responseMessage.type === 'auth_status') {
+        logAt('basic', '[Claude] Auth status', responseMessage);
+      } else if (responseMessage.type === 'stream_event') {
+        logAt('trace', '[Claude] Stream event', responseMessage.event);
       } else if (responseMessage.type === 'result') {
-        console.log('[Claude] Result:', JSON.stringify(responseMessage, null, 2).substring(0, 500));
+        logAt('basic', '[Claude] Result:', JSON.stringify(responseMessage, null, 2).substring(0, 500));
         gotResult = true;
 
         // Capture session_id for conversation continuity
         if ('session_id' in responseMessage && responseMessage.session_id) {
           chatSessionIds.set(chatId, responseMessage.session_id);
-          console.log(`[Claude] Stored session ${responseMessage.session_id} for chat ${chatId}`);
+          sessionManager.setClaudeSessionId(chatId, responseMessage.session_id);
+          logAt('basic', `[Claude] Stored session ${responseMessage.session_id} for chat ${chatId}`);
         }
 
         if (responseMessage.subtype === 'success') {
