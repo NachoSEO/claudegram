@@ -13,6 +13,11 @@ const VIDEO_DOWNLOAD_TIMEOUT_SEC = 120;
 const FFMPEG_TIMEOUT_MS = 120000;
 const FFMPEG_COMPRESS_TIMEOUT_MS = 300000; // 5 min for compression
 
+type VideoSource =
+  | { type: 'dash'; url: string }
+  | { type: 'external'; url: string }
+  | null;
+
 function esc(text: string): string {
   return escapeMarkdownV2(text);
 }
@@ -83,17 +88,59 @@ function extractDashUrlFromHtml(html: string): string | null {
   return id ? dashUrlFromId(id) : null;
 }
 
+function extractExternalUrlFromHtml(html: string): string | null {
+  const match = html.match(/data-url="(https?:\/\/[^"]+)"/);
+  if (!match) return null;
+  const url = match[1];
+  // Skip Reddit self-links and images
+  if (url.includes('reddit.com') || url.includes('redd.it')) return null;
+  if (/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)) return null;
+  return url;
+}
+
 async function resolveFinalUrl(url: string): Promise<string> {
-  const response = await fetchWithTimeout(url, { redirect: 'follow', headers: { 'User-Agent': USER_AGENT } }, PAGE_FETCH_TIMEOUT_MS);
-  return response.url || url;
+  return new Promise((resolve, reject) => {
+    execFile(
+      'curl',
+      ['-sS', '-L', '-o', '/dev/null', '-w', '%{url_effective}',
+       '-H', `User-Agent: ${USER_AGENT}`,
+       '--connect-timeout', '15', '--max-time', '30',
+       url],
+      { timeout: 35000 },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(`Failed to resolve URL: ${(stderr || '').trim() || error.message}`));
+          return;
+        }
+        resolve(stdout.trim() || url);
+      }
+    );
+  });
 }
 
 async function fetchHtml(url: string): Promise<string> {
-  const response = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } }, PAGE_FETCH_TIMEOUT_MS);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch page (${response.status})`);
-  }
-  return await response.text();
+  return new Promise((resolve, reject) => {
+    execFile(
+      'curl',
+      ['-sS', '-L', '-f',
+       '-H', `User-Agent: ${USER_AGENT}`,
+       '-b', 'over18=1',
+       '--connect-timeout', '15', '--max-time', '30',
+       url],
+      { timeout: 35000, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(`Failed to fetch page: ${(stderr || '').trim() || error.message}`));
+          return;
+        }
+        if (!stdout) {
+          reject(new Error('Empty response from page'));
+          return;
+        }
+        resolve(stdout);
+      }
+    );
+  });
 }
 
 async function parseDashManifest(dashUrl: string): Promise<{ videoUrl?: string; audioUrl?: string } | null> {
@@ -200,6 +247,35 @@ async function downloadFile(url: string, destPath: string, timeoutSec: number): 
           resolve(stat.size);
         } catch (statError) {
           reject(statError instanceof Error ? statError : new Error('Failed to stat downloaded file'));
+        }
+      }
+    );
+  });
+}
+
+async function downloadWithYtDlp(url: string, outputPath: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'yt-dlp',
+      [
+        '-f', 'best[ext=mp4]/best',
+        '--merge-output-format', 'mp4',
+        '-o', outputPath,
+        '--no-playlist',
+        '--socket-timeout', '30',
+        url,
+      ],
+      { timeout: VIDEO_DOWNLOAD_TIMEOUT_SEC * 1000 },
+      (error, _stdout, stderr) => {
+        if (error) {
+          reject(new Error(`yt-dlp failed: ${(stderr || '').trim() || error.message}`));
+          return;
+        }
+        try {
+          const stat = fs.statSync(outputPath);
+          resolve(stat.size);
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error('Failed to stat yt-dlp output'));
         }
       }
     );
@@ -354,48 +430,82 @@ function getUrlExtension(urlString: string, fallback: string): string {
   }
 }
 
-async function resolveDashUrlFromInput(input: string): Promise<string | null> {
+async function resolveVideoSource(input: string): Promise<VideoSource> {
   const token = normalizeInput(input);
+  console.log(`[vReddit] Input: "${input}" → token: "${token}"`);
   if (!token) return null;
 
   if (token.includes('DASHPlaylist.mpd')) {
     const url = ensureUrl(token);
-    return url;
+    console.log(`[vReddit] Direct DASH URL: ${url}`);
+    return url ? { type: 'dash', url } : null;
   }
 
   const candidateUrl = ensureUrl(token);
+  console.log(`[vReddit] Candidate URL: ${candidateUrl}`);
   if (!candidateUrl) return null;
 
   let parsed: URL;
   try {
     parsed = new URL(candidateUrl);
   } catch {
+    console.log('[vReddit] Failed to parse URL');
     return null;
   }
 
   if (parsed.hostname === 'v.redd.it') {
     const id = extractVRedditIdFromUrl(parsed);
-    return id ? dashUrlFromId(id) : null;
+    console.log(`[vReddit] v.redd.it ID: ${id}`);
+    return id ? { type: 'dash', url: dashUrlFromId(id) } : null;
   }
 
   if (!isRedditHost(parsed.hostname)) {
+    console.log(`[vReddit] Not a Reddit host: ${parsed.hostname}`);
     return null;
   }
 
+  console.log(`[vReddit] Resolving final URL from: ${parsed.toString()}`);
   const finalUrl = await resolveFinalUrl(parsed.toString());
+  console.log(`[vReddit] Final URL: ${finalUrl}`);
+
   let finalParsed: URL;
   try {
     finalParsed = new URL(finalUrl);
   } catch {
+    console.log('[vReddit] Failed to parse final URL');
     return null;
   }
 
   if (!isRedditHost(finalParsed.hostname)) {
+    console.log(`[vReddit] Final URL not Reddit host: ${finalParsed.hostname}`);
     return null;
   }
 
+  // Rewrite to old.reddit.com for HTML fetch — old.reddit.com serves simpler HTML
+  // with v.redd.it references and respects the over18=1 cookie for NSFW content
+  if (['www.reddit.com', 'new.reddit.com', 'm.reddit.com', 'reddit.com'].includes(finalParsed.hostname)) {
+    finalParsed.hostname = 'old.reddit.com';
+  }
+
+  console.log(`[vReddit] Fetching HTML from: ${finalParsed.toString()}`);
   const html = await fetchHtml(finalParsed.toString());
-  return extractDashUrlFromHtml(html);
+  console.log(`[vReddit] HTML length: ${html.length} chars`);
+
+  const dashUrl = extractDashUrlFromHtml(html);
+  if (dashUrl) {
+    console.log(`[vReddit] Extracted DASH URL: ${dashUrl}`);
+    return { type: 'dash', url: dashUrl };
+  }
+
+  // Fallback: check for external video embed (e.g. redgifs.com)
+  const externalUrl = extractExternalUrlFromHtml(html);
+  if (externalUrl) {
+    console.log(`[vReddit] Found external video embed: ${externalUrl}`);
+    return { type: 'external', url: externalUrl };
+  }
+
+  console.log('[vReddit] No video source found in HTML');
+  return null;
 }
 
 export async function executeVReddit(ctx: Context, input: string): Promise<void> {
@@ -406,41 +516,77 @@ export async function executeVReddit(ctx: Context, input: string): Promise<void>
   try {
     ackMsg = await ctx.reply('🎬 Downloading Reddit video...', { parse_mode: undefined });
 
-    const dashUrl = await resolveDashUrlFromInput(input);
-    if (!dashUrl) {
-      await replyMd(ctx, '❌ No Reddit\\-hosted video found in that link\\.');
-      return;
-    }
-
-    const streams = await parseDashManifest(dashUrl);
-    if (!streams?.videoUrl) {
-      await replyMd(ctx, '❌ Failed to locate a downloadable video stream\\.');
+    const source = await resolveVideoSource(input);
+    if (!source) {
+      await replyMd(ctx, '❌ No video found in that link\\.');
       return;
     }
 
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claudegram-vreddit-'));
 
-    const videoExt = getUrlExtension(streams.videoUrl, '.mp4');
-    const videoPath = path.join(tempDir, `video${videoExt}`);
-    const videoSize = await downloadFile(streams.videoUrl, videoPath, VIDEO_DOWNLOAD_TIMEOUT_SEC);
+    let finalPath: string;
+    let finalSize: number;
 
-    let finalPath = videoPath;
-    let finalSize = videoSize;
-
-    if (streams.audioUrl) {
-      const audioExt = getUrlExtension(streams.audioUrl, '.mp4');
-      const audioPath = path.join(tempDir, `audio${audioExt}`);
-      await downloadFile(streams.audioUrl, audioPath, VIDEO_DOWNLOAD_TIMEOUT_SEC);
-
-      const mergedPath = path.join(tempDir, 'video_merged.mp4');
-      try {
-        await mergeVideoAudio(videoPath, audioPath, mergedPath);
-        const stat = fs.statSync(mergedPath);
-        finalPath = mergedPath;
-        finalSize = stat.size;
-      } catch (error) {
-        console.warn('[vReddit] Merge failed, sending video-only:', error);
+    if (source.type === 'dash') {
+      // === DASH pipeline (Reddit-hosted video) ===
+      console.log(`[vReddit] Parsing DASH manifest: ${source.url}`);
+      const streams = await parseDashManifest(source.url);
+      if (!streams?.videoUrl) {
+        console.log('[vReddit] No video stream found in DASH manifest');
+        await replyMd(ctx, '❌ Failed to locate a downloadable video stream\\.');
+        return;
       }
+      console.log(`[vReddit] Video stream: ${streams.videoUrl}`);
+      if (streams.audioUrl) console.log(`[vReddit] Audio stream: ${streams.audioUrl}`);
+
+      const videoExt = getUrlExtension(streams.videoUrl, '.mp4');
+      const videoPath = path.join(tempDir, `video${videoExt}`);
+      console.log('[vReddit] Downloading video stream...');
+      const videoSize = await downloadFile(streams.videoUrl, videoPath, VIDEO_DOWNLOAD_TIMEOUT_SEC);
+      console.log(`[vReddit] Video downloaded: ${(videoSize / 1024 / 1024).toFixed(1)}MB`);
+
+      finalPath = videoPath;
+      finalSize = videoSize;
+
+      if (streams.audioUrl) {
+        const audioExt = getUrlExtension(streams.audioUrl, '.mp4');
+        const audioPath = path.join(tempDir, `audio${audioExt}`);
+        console.log('[vReddit] Downloading audio stream...');
+        await downloadFile(streams.audioUrl, audioPath, VIDEO_DOWNLOAD_TIMEOUT_SEC);
+
+        const mergedPath = path.join(tempDir, 'video_merged.mp4');
+        try {
+          console.log('[vReddit] Merging video + audio...');
+          await mergeVideoAudio(videoPath, audioPath, mergedPath);
+          const stat = fs.statSync(mergedPath);
+          finalPath = mergedPath;
+          finalSize = stat.size;
+          console.log(`[vReddit] Merged: ${(finalSize / 1024 / 1024).toFixed(1)}MB`);
+        } catch (error) {
+          console.warn('[vReddit] Merge failed, sending video-only:', error);
+        }
+      }
+    } else {
+      // === External embed pipeline (yt-dlp) ===
+      let domain: string;
+      try {
+        domain = new URL(source.url).hostname;
+      } catch {
+        domain = 'external site';
+      }
+      console.log(`[vReddit] Downloading external video via yt-dlp: ${source.url}`);
+      if (ackMsg && ctx.chat?.id) {
+        try {
+          await ctx.api.editMessageText(ctx.chat.id, ackMsg.message_id, `🎬 Downloading video from ${domain}...`);
+        } catch {
+          // ignore edit errors
+        }
+      }
+
+      const ytdlpPath = path.join(tempDir, 'video_ytdlp.mp4');
+      finalSize = await downloadWithYtDlp(source.url, ytdlpPath);
+      finalPath = ytdlpPath;
+      console.log(`[vReddit] yt-dlp downloaded: ${(finalSize / 1024 / 1024).toFixed(1)}MB`);
     }
 
     if (finalSize > maxVideoBytes) {
@@ -466,7 +612,7 @@ export async function executeVReddit(ctx: Context, input: string): Promise<void>
       }
 
       console.log(`[vReddit] Video ${(finalSize / 1024 / 1024).toFixed(1)}MB exceeds limit, trying CRF compress`);
-      const crfPath = path.join(tempDir!, 'video_crf.mp4');
+      const crfPath = path.join(tempDir, 'video_crf.mp4');
       try {
         const crfSize = await compressCrf(finalPath, crfPath);
         console.log(`[vReddit] CRF compress: ${(crfSize / 1024 / 1024).toFixed(1)}MB`);
@@ -477,7 +623,7 @@ export async function executeVReddit(ctx: Context, input: string): Promise<void>
         } else {
           // Stage 2: Two-pass target compression (slower, exact size)
           console.log('[vReddit] CRF still too large, trying two-pass at 49MB target');
-          const twoPassPath = path.join(tempDir!, 'video_2pass.mp4');
+          const twoPassPath = path.join(tempDir, 'video_2pass.mp4');
           const duration = await getVideoDuration(finalPath);
           const twoPassSize = await compressTwoPass(finalPath, twoPassPath, 49, duration);
           console.log(`[vReddit] Two-pass compress: ${(twoPassSize / 1024 / 1024).toFixed(1)}MB`);
@@ -497,13 +643,14 @@ export async function executeVReddit(ctx: Context, input: string): Promise<void>
       }
     }
 
+    console.log(`[vReddit] Uploading ${(finalSize / 1024 / 1024).toFixed(1)}MB video to Telegram...`);
     await ctx.replyWithChatAction('upload_video');
     await ctx.replyWithVideo(new InputFile(finalPath), {
       supports_streaming: true,
     });
   } catch (error) {
     console.warn('[vReddit] Failed to download video:', error);
-    await replyMd(ctx, '❌ Failed to download Reddit video\\.');
+    await replyMd(ctx, '❌ Failed to download video\\.');
   } finally {
     if (ackMsg && ctx.chat?.id) {
       try {
