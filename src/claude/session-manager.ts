@@ -1,4 +1,32 @@
+import * as fs from 'fs';
+import * as os from 'os';
 import { sessionHistory, SessionHistoryEntry } from './session-history.js';
+
+/**
+ * Resolve a stored working directory to a valid path on this system.
+ * Handles cross-OS portability (e.g. /Users/x saved on macOS, running on Linux).
+ */
+function resolveWorkingDirectory(storedPath: string): string {
+  // If it exists, use as-is
+  if (fs.existsSync(storedPath)) return storedPath;
+
+  // Try remapping: replace the stored home prefix with the current $HOME
+  // e.g. /Users/player3vsgpt/foo → /home/player3vsgpt/foo
+  const home = os.homedir();
+  const homePrefixes = ['/Users/', '/home/'];
+  for (const prefix of homePrefixes) {
+    if (storedPath.startsWith(prefix)) {
+      // Extract everything after the username segment
+      const rest = storedPath.slice(prefix.length);
+      const slashIdx = rest.indexOf('/');
+      const remapped = slashIdx === -1 ? home : `${home}${rest.slice(slashIdx)}`;
+      if (fs.existsSync(remapped)) return remapped;
+    }
+  }
+
+  // Last resort: fall back to $HOME
+  return home;
+}
 
 interface Session {
   conversationId: string;
@@ -16,17 +44,18 @@ class SessionManager {
   }
 
   createSession(chatId: number, workingDirectory: string, conversationId?: string): Session {
+    const resolved = resolveWorkingDirectory(workingDirectory);
     const session: Session = {
       conversationId: conversationId || this.generateConversationId(),
       claudeSessionId: undefined,
-      workingDirectory,
+      workingDirectory: resolved,
       createdAt: new Date(),
       lastActivity: new Date(),
     };
     this.sessions.set(chatId, session);
 
     // Persist to history
-    sessionHistory.saveSession(chatId, session.conversationId, workingDirectory, '', session.claudeSessionId);
+    sessionHistory.saveSession(chatId, session.conversationId, resolved, '', session.claudeSessionId);
 
     return session;
   }
@@ -66,17 +95,18 @@ class SessionManager {
       return undefined;
     }
 
+    const resolvedPath = resolveWorkingDirectory(historyEntry.projectPath);
     const session: Session = {
       conversationId: historyEntry.conversationId,
       claudeSessionId: historyEntry.claudeSessionId,
-      workingDirectory: historyEntry.projectPath,
+      workingDirectory: resolvedPath,
       createdAt: new Date(historyEntry.createdAt),
       lastActivity: new Date(),
     };
     this.sessions.set(chatId, session);
 
-    // Update history activity
-    sessionHistory.saveSession(chatId, conversationId, historyEntry.projectPath, historyEntry.lastMessagePreview, historyEntry.claudeSessionId);
+    // Update history activity (with resolved path)
+    sessionHistory.saveSession(chatId, conversationId, resolvedPath, historyEntry.lastMessagePreview, historyEntry.claudeSessionId);
 
     return session;
   }

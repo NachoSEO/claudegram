@@ -1,4 +1,5 @@
 import { query, type SDKMessage, type PermissionMode, type SettingSource, type HookEvent, type HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
+import * as fs from 'fs';
 import { sessionManager } from './session-manager.js';
 import { config } from '../config.js';
 
@@ -155,6 +156,18 @@ Reasoning Summary (required when enabled):
 
 const SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}${REDDIT_VIDEO_TOOL_PROMPT}${MEDIUM_TOOL_PROMPT}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
 
+/**
+ * Strip the "Reasoning Summary" section from the end of a response
+ * so it doesn't appear in Telegram chat (it's already in logs).
+ */
+function stripReasoningSummary(text: string): string {
+  // Match a trailing reasoning summary block:
+  //   ---\n**Reasoning Summary**\n... (to end)
+  //   or: **Reasoning Summary**\n... (to end)
+  //   or: *Reasoning Summary*\n... (to end)
+  return text.replace(/\n*(?:---\n+)?(?:\*{1,2})Reasoning Summary(?:\*{1,2})\n[\s\S]*$/, '').trimEnd();
+}
+
 type LogLevel = 'off' | 'basic' | 'verbose' | 'trace';
 const LOG_LEVELS: Record<LogLevel, number> = {
   off: 0,
@@ -300,8 +313,20 @@ export async function sendToAgent(
         }
         : undefined;
 
+    // Validate cwd exists — stale sessions may reference paths from another OS
+    let cwd = session.workingDirectory;
+    try {
+      if (!fs.existsSync(cwd)) {
+        const fallback = process.env.HOME || process.cwd();
+        console.warn(`[Claude] Working directory does not exist: ${cwd}, falling back to ${fallback}`);
+        cwd = fallback;
+      }
+    } catch {
+      cwd = process.env.HOME || process.cwd();
+    }
+
     const queryOptions: Parameters<typeof query>[0]['options'] = {
-      cwd: session.workingDirectory,
+      cwd,
       tools: toolsOption,
       ...(allowedToolsOption ? { allowedTools: allowedToolsOption } : {}),
       permissionMode,
@@ -425,7 +450,7 @@ export async function sendToAgent(
   conversationHistory.set(chatId, history);
 
   return {
-    text: fullText || 'No response from Claude.',
+    text: stripReasoningSummary(fullText) || 'No response from Claude.',
     toolsUsed,
   };
 }
@@ -511,7 +536,7 @@ IMPORTANT: When you have fully completed this task, respond with the word "DONE"
   }
 
   return {
-    text: combinedText,
+    text: stripReasoningSummary(combinedText),
     toolsUsed: allToolsUsed,
   };
 }
