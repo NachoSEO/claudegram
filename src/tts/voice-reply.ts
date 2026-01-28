@@ -1,6 +1,6 @@
 import { Context, InputFile } from 'grammy';
 import { config } from '../config.js';
-import { generateSpeech } from './openai-tts.js';
+import { generateSpeech } from './tts.js';
 import { getTTSSettings, isTTSEnabled } from './tts-settings.js';
 
 function stripMarkdown(input: string): string {
@@ -52,7 +52,8 @@ export async function maybeSendVoiceReply(ctx: Context, text: string): Promise<v
   const chatId = ctx.chat?.id;
   if (!chatId) return;
   if (!isTTSEnabled(chatId)) return;
-  if (!config.OPENAI_API_KEY) return;
+  const hasKey = config.TTS_PROVIDER === 'groq' ? !!config.GROQ_API_KEY : !!config.OPENAI_API_KEY;
+  if (!hasKey) return;
   if (looksLikeError(text)) return;
 
   const cleaned = stripMarkdown(text);
@@ -64,8 +65,18 @@ export async function maybeSendVoiceReply(ctx: Context, text: string): Promise<v
   try {
     const settings = getTTSSettings(chatId);
     const audioBuffer = await generateSpeech(safeText, settings.voice);
-    const format = config.TTS_RESPONSE_FORMAT === 'opus' ? 'ogg' : config.TTS_RESPONSE_FORMAT;
-    await ctx.replyWithVoice(new InputFile(audioBuffer, `response.${format}`));
+    const format = config.TTS_PROVIDER === 'groq'
+      ? 'ogg'
+      : config.TTS_RESPONSE_FORMAT === 'opus' ? 'ogg' : config.TTS_RESPONSE_FORMAT;
+    const file = new InputFile(audioBuffer, `response.${format}`);
+
+    if (settings.autoplay) {
+      // Voice message: plays inline automatically in Telegram
+      await ctx.replyWithVoice(file);
+    } else {
+      // Audio file: doesn't autoplay, shows as downloadable attachment
+      await ctx.replyWithAudio(file);
+    }
   } catch (error) {
     console.error('[TTS] Failed to generate or send voice reply:', error);
   }

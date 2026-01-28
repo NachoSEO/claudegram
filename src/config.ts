@@ -44,6 +44,7 @@ const envSchema = z.object({
     .default('4000')
     .transform((val) => parseInt(val, 10)),
   // TTS Configuration
+  TTS_PROVIDER: z.enum(['groq', 'openai']).default('groq'),
   TTS_MODEL: z.string().default('gpt-4o-mini-tts'),
   TTS_VOICE: z.string().default('coral'),
   TTS_INSTRUCTIONS: z.string().default('Speak in a friendly, natural conversational tone.'),

@@ -22,7 +22,7 @@ import {
 import { createTelegraphFromFile, createTelegraphPage } from '../../telegram/telegraph.js';
 import { isMediumUrl, fetchMediumArticle, FreediumArticle } from '../../medium/freedium.js';
 import { escapeMarkdownV2 } from '../../telegram/markdown.js';
-import { getTTSSettings, setTTSEnabled, setTTSVoice } from '../../tts/tts-settings.js';
+import { getTTSSettings, setTTSEnabled, setTTSVoice, setTTSAutoplay } from '../../tts/tts-settings.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
 import { executeVReddit } from '../../reddit/vreddit.js';
@@ -42,11 +42,19 @@ function esc(text: string): string {
   return escapeMarkdownV2(text);
 }
 
-const TTS_VOICES = [
+const OPENAI_TTS_VOICES = [
   'alloy', 'ash', 'ballad', 'coral',
   'echo', 'fable', 'nova', 'onyx',
   'sage', 'shimmer', 'verse', 'marin', 'cedar',
 ] as const;
+
+const GROQ_TTS_VOICES = [
+  'autumn', 'diana', 'hannah', 'austin', 'daniel', 'troy',
+] as const;
+
+function getActiveTTSVoices(): readonly string[] {
+  return config.TTS_PROVIDER === 'groq' ? GROQ_TTS_VOICES : OPENAI_TTS_VOICES;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
@@ -177,37 +185,49 @@ async function runClaudeContext(sessionId: string, cwd: string): Promise<string>
 
 function buildTTSMenu(chatId: number, mode: TTSMenuMode) {
   const settings = getTTSSettings(chatId);
-  const apiStatus = config.OPENAI_API_KEY ? 'configured' : 'missing';
+  const hasKey = config.TTS_PROVIDER === 'groq' ? !!config.GROQ_API_KEY : !!config.OPENAI_API_KEY;
+  const apiStatus = hasKey ? 'configured' : 'missing';
+  const providerLabel = config.TTS_PROVIDER === 'groq' ? 'Groq Orpheus' : 'OpenAI';
 
   const statusLine = settings.enabled ? 'ON' : 'OFF';
+  const autoplayLine = settings.autoplay ? 'ON' : 'OFF';
   const header = `🔊 *Voice Replies*`;
   const baseText =
     `${header}\n\n` +
+    `Provider: *${esc(providerLabel)}*\n` +
     `Status: *${statusLine}*\n` +
     `Voice: *${esc(settings.voice)}*\n` +
+    `Autoplay: *${autoplayLine}*\n` +
     `API key: *${esc(apiStatus)}*`;
 
   if (mode === 'voices') {
+    const voices = getActiveTTSVoices();
     const voiceRows: { text: string; callback_data: string }[][] = [];
-    const chunkSize = 4;
-    for (let i = 0; i < TTS_VOICES.length; i += chunkSize) {
-      const chunk = TTS_VOICES.slice(i, i + chunkSize);
+    const chunkSize = 3;
+    for (let i = 0; i < voices.length; i += chunkSize) {
+      const chunk = voices.slice(i, i + chunkSize);
       voiceRows.push(chunk.map((voice) => ({
         text: voice === settings.voice ? `✓ ${voice}` : voice,
         callback_data: `tts:voice:${voice}`,
       })));
     }
 
+    const recommended = config.TTS_PROVIDER === 'groq'
+      ? 'autumn, troy'
+      : 'marin, cedar';
+
     return {
       text:
         `${header}\n\n` +
-        `Pick a voice\\.\nRecommended: marin, cedar\\.`,
+        `Pick a voice\\.\nRecommended: ${esc(recommended)}\\.`,
       keyboard: [
         ...voiceRows,
         [{ text: 'Back', callback_data: 'tts:back' }],
       ],
     };
   }
+
+  const autoplayLabel = settings.autoplay ? '✓ Autoplay' : 'Autoplay';
 
   return {
     text: baseText,
@@ -216,7 +236,10 @@ function buildTTSMenu(chatId: number, mode: TTSMenuMode) {
         { text: settings.enabled ? '✓ On' : 'On', callback_data: 'tts:on' },
         { text: !settings.enabled ? '✓ Off' : 'Off', callback_data: 'tts:off' },
       ],
-      [{ text: `Voice: ${settings.voice}`, callback_data: 'tts:voices' }],
+      [
+        { text: `Voice: ${settings.voice}`, callback_data: 'tts:voices' },
+        { text: autoplayLabel, callback_data: 'tts:autoplay' },
+      ],
     ],
   };
 }
@@ -785,17 +808,23 @@ export async function handleTTSCallback(ctx: Context): Promise<void> {
   if (!data || !data.startsWith('tts:')) return;
 
   if (data === 'tts:on') {
-    if (!config.OPENAI_API_KEY) {
-      await ctx.answerCallbackQuery({ text: 'OPENAI_API_KEY missing. Set it in .env and restart.' });
+    const hasKey = config.TTS_PROVIDER === 'groq' ? !!config.GROQ_API_KEY : !!config.OPENAI_API_KEY;
+    const keyName = config.TTS_PROVIDER === 'groq' ? 'GROQ_API_KEY' : 'OPENAI_API_KEY';
+    if (!hasKey) {
+      await ctx.answerCallbackQuery({ text: `${keyName} missing. Set it in .env and restart.` });
       setTTSEnabled(chatId, false);
     } else {
       setTTSEnabled(chatId, true);
     }
   } else if (data === 'tts:off') {
     setTTSEnabled(chatId, false);
+  } else if (data === 'tts:autoplay') {
+    const current = getTTSSettings(chatId);
+    setTTSAutoplay(chatId, !current.autoplay);
   } else if (data.startsWith('tts:voice:')) {
     const voice = data.replace('tts:voice:', '');
-    if (TTS_VOICES.includes(voice as typeof TTS_VOICES[number])) {
+    const voices = getActiveTTSVoices();
+    if (voices.includes(voice)) {
       setTTSVoice(chatId, voice);
     }
   }
@@ -806,10 +835,17 @@ export async function handleTTSCallback(ctx: Context): Promise<void> {
   const menu = buildTTSMenu(chatId, mode);
 
   await ctx.answerCallbackQuery();
-  await ctx.editMessageText(menu.text, {
-    parse_mode: 'MarkdownV2',
-    reply_markup: { inline_keyboard: menu.keyboard },
-  });
+  try {
+    await ctx.editMessageText(menu.text, {
+      parse_mode: 'MarkdownV2',
+      reply_markup: { inline_keyboard: menu.keyboard },
+    });
+  } catch (error) {
+    // Ignore "message is not modified" — happens with duplicate callbacks
+    if (!(error instanceof Error && error.message.includes('message is not modified'))) {
+      throw error;
+    }
+  }
 }
 
 export async function handlePing(ctx: Context): Promise<void> {
