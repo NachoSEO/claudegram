@@ -552,14 +552,15 @@ function formatJson(result: PostResult | SubredditResult | UserResult): string {
 }
 
 // ---------------------------------------------------------------------------
-// Main entry point
+// Raw fetcher — single API call, returns raw result objects
 // ---------------------------------------------------------------------------
-export async function redditFetch(
+type RawResult = PostResult | SubredditResult | UserResult;
+
+async function redditFetchRaw(
   targets: string[],
   options: RedditFetchOptions = {}
-): Promise<string> {
+): Promise<RawResult[]> {
   const {
-    format = 'markdown',
     sort = 'hot',
     limit = 25,
     depth = 5,
@@ -568,7 +569,7 @@ export async function redditFetch(
 
   const headers = await getAuthHeaders();
   const userAgent = headers['User-Agent'];
-  const results: string[] = [];
+  const results: RawResult[] = [];
 
   for (const raw of targets) {
     let parsed = parseRedditUrl(raw);
@@ -587,28 +588,11 @@ export async function redditFetch(
     }
 
     if (parsed.type === 'post') {
-      const result = await fetchPost(headers, parsed.post_id!, parsed.subreddit, depth);
-      results.push(format === 'json' ? formatJson(result) : formatPostMarkdown(result));
+      results.push(await fetchPost(headers, parsed.post_id!, parsed.subreddit, depth));
     } else if (parsed.type === 'subreddit') {
-      const result = await fetchSubreddit(
-        headers,
-        parsed.subreddit!,
-        sort,
-        limit,
-        timeFilter
-      );
-      results.push(
-        format === 'json' ? formatJson(result) : formatSubredditMarkdown(result)
-      );
+      results.push(await fetchSubreddit(headers, parsed.subreddit!, sort, limit, timeFilter));
     } else if (parsed.type === 'user') {
-      const result = await fetchUser(
-        headers,
-        parsed.username!,
-        sort,
-        limit,
-        timeFilter
-      );
-      results.push(format === 'json' ? formatJson(result) : formatUserMarkdown(result));
+      results.push(await fetchUser(headers, parsed.username!, sort, limit, timeFilter));
     } else {
       throw new Error(`Unknown target type for: ${raw}`);
     }
@@ -618,9 +602,47 @@ export async function redditFetch(
     throw new Error('No results.');
   }
 
-  if (format === 'json' && results.length > 1) {
-    return `[\n${results.join(',\n')}\n]`;
+  return results;
+}
+
+function formatResults(results: RawResult[], format: 'markdown' | 'json'): string {
+  const formatted = results.map((r) => {
+    if (format === 'json') return formatJson(r);
+    if ('post' in r) return formatPostMarkdown(r as PostResult);
+    if ('subreddit' in r) return formatSubredditMarkdown(r as SubredditResult);
+    return formatUserMarkdown(r as UserResult);
+  });
+
+  if (format === 'json' && formatted.length > 1) {
+    return `[\n${formatted.join(',\n')}\n]`;
   }
   const separator = format === 'markdown' ? '\n\n---\n\n' : '\n';
-  return results.join(separator);
+  return formatted.join(separator);
+}
+
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
+export async function redditFetch(
+  targets: string[],
+  options: RedditFetchOptions = {}
+): Promise<string> {
+  const format = options.format || 'markdown';
+  const raw = await redditFetchRaw(targets, options);
+  return formatResults(raw, format);
+}
+
+/**
+ * Fetch once, return both markdown and JSON strings.
+ * Avoids a second API call for the large-thread JSON fallback.
+ */
+export async function redditFetchBoth(
+  targets: string[],
+  options: RedditFetchOptions = {}
+): Promise<{ markdown: string; json: string }> {
+  const raw = await redditFetchRaw(targets, options);
+  return {
+    markdown: formatResults(raw, 'markdown'),
+    json: formatResults(raw, 'json'),
+  };
 }

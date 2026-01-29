@@ -27,7 +27,7 @@ import { getTTSSettings, setTTSEnabled, setTTSVoice, setTTSAutoplay } from '../.
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
 import { executeVReddit } from '../../reddit/vreddit.js';
-import { redditFetch, type RedditFetchOptions } from '../../reddit/redditfetch.js';
+import { redditFetch, redditFetchBoth, type RedditFetchOptions } from '../../reddit/redditfetch.js';
 import { fmtTokens, getProgressBar } from './message.handler.js';
 import {
   detectPlatform,
@@ -1631,6 +1631,7 @@ function ensureMediumOutputDir(ctx: Context, url: string): string {
 // Pending Reddit fetch results keyed by chatId, with 5-min TTL
 const pendingRedditResults = new Map<number, {
   output: string;
+  jsonOutput: string;
   targets: string[];
   options: RedditFetchOptions;
   format: RedditFormat | null;
@@ -1694,7 +1695,8 @@ export async function executeRedditFetch(
   if (!chatId) return;
 
   try {
-    const output = await redditFetch(targets, options);
+    // Fetch both formats in a single API call to avoid double-dipping
+    const { markdown: output, json: jsonOutput } = await redditFetchBoth(targets, options);
 
     if (!output.trim()) {
       await replyMd(ctx, '❌ No results returned\\.');
@@ -1728,9 +1730,10 @@ export async function executeRedditFetch(
       },
     });
 
-    // Cache the result for callback handling
+    // Cache both formats for callback handling
     pendingRedditResults.set(chatId, {
       output,
+      jsonOutput,
       targets,
       options,
       format,
@@ -1777,17 +1780,16 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
 
   await ctx.answerCallbackQuery();
 
-  const { output, targets, options, format, hadOutputFlag } = pending;
+  const { output, jsonOutput, targets, format, hadOutputFlag } = pending;
   const doFile = action === 'file' || action === 'both';
   const doChat = action === 'chat' || action === 'both';
 
   try {
     // ── File mode ──────────────────────────────────────────────────
     if (doFile) {
-      // Large thread JSON fallback
+      // Large thread JSON fallback (uses cached JSON, no second API call)
       if (!format && output.length > config.REDDITFETCH_JSON_THRESHOLD_CHARS) {
         try {
-          const jsonOutput = await redditFetch(targets, { ...options, format: 'json' });
           const outputPath = buildRedditOutputPath(ctx, targets);
           fs.writeFileSync(outputPath, jsonOutput, 'utf-8');
 
