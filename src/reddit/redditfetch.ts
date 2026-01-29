@@ -241,8 +241,8 @@ async function resolveShareLink(
     if (parsed && parsed.type === 'post') {
       return parsed;
     }
-  } catch {
-    // Silently fail share link resolution
+  } catch (err) {
+    console.warn(`[redditfetch] Share link resolution failed for: ${url}`, err);
   }
   return null;
 }
@@ -315,7 +315,10 @@ async function fetchSubreddit(
     data: { children: Array<{ data: Record<string, unknown> }> };
   };
 
-  const posts = data.data.children.map((child) => child.data);
+  const children = data?.data?.children;
+  const posts = (Array.isArray(children) ? children : [])
+    .filter((child) => child?.data)
+    .map((child) => child.data);
   return { subreddit, sort, posts };
 }
 
@@ -345,7 +348,10 @@ async function fetchUser(
     data: { children: Array<{ data: Record<string, unknown> }> };
   };
 
-  const items = data.data.children.map((child) => child.data);
+  const children = data?.data?.children;
+  const items = (Array.isArray(children) ? children : [])
+    .filter((child) => child?.data)
+    .map((child) => child.data);
   return { username, items };
 }
 
