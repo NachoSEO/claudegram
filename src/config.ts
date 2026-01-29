@@ -74,7 +74,13 @@ const envSchema = z.object({
     .string()
     .default('8000')
     .transform((val) => parseInt(val, 10)),
+  // Reddit API credentials (native TypeScript module)
+  REDDIT_CLIENT_ID: z.string().optional(),
+  REDDIT_CLIENT_SECRET: z.string().optional(),
+  REDDIT_USERNAME: z.string().optional(),
+  REDDIT_PASSWORD: z.string().optional(),
   // Reddit fetch configuration
+  // DEPRECATED: REDDITFETCH_PATH — replaced by native TypeScript module; kept for reference only
   REDDITFETCH_PATH: z.string().default(''),
   REDDITFETCH_TIMEOUT_MS: z
     .string()

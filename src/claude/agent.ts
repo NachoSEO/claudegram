@@ -128,33 +128,15 @@ Structure guidelines for long responses:
 - Nest sub-items under list items for tree-like structures instead of indented text
 
 Reddit Tool:
-You have access to a Reddit fetching tool via Bash.
-Path: python3 ${config.REDDITFETCH_PATH} <target> [options]
+The user has a native /reddit command in Telegram that fetches Reddit content directly (no Bash needed).
 
+Usage: /reddit <target> [options]
 Targets: post URL, post ID, r/<subreddit>, u/<username>, share links (reddit.com/r/.../s/...)
-Flags: --sort <hot|new|top|rising>, --limit <n>, --time <day|week|month|year|all>, --depth <n>, -o <file>, -f <markdown|json>
-The tool handles its own authentication. Always use the full absolute path shown above.
+Flags: --sort <hot|new|top|rising>, --limit <n>, --time <day|week|month|year|all>, --depth <n>, -f <markdown|json>
+The tool handles authentication and formatting automatically.
 
-IMPORTANT — File-Based Workflow for Single Posts:
-When fetching a single Reddit post (URL or ID), ALWAYS use this workflow to avoid flooding your context with thousands of comments:
-
-1. Save to file:
-   mkdir -p .reddit && python3 ${config.REDDITFETCH_PATH} "<url>" --depth 5 -o .reddit/<post_id>.md
-   Extract the post ID from the URL for the filename (e.g., 1lmkfhf.md). If it's a share link, use a slug from the URL.
-
-2. Read overview (first ~100 lines for post header + top comments):
-   Use the Read tool on .reddit/<post_id>.md with limit=200
-
-3. Report the overview to the user. Note the total comment count.
-
-4. When the user asks about a specific comment or user:
-   - Use Grep on .reddit/<post_id>.md to find by username (e.g., pattern "u/username") or keyword
-   - Use Read with offset/limit around the match to get full context
-   - Quote the relevant comment directly in your response
-
-5. Do NOT re-fetch unless the user explicitly asks. Reuse the saved .reddit/ file for all follow-up questions about the same post.
-
-For subreddit feeds (r/<sub>) and user profiles (u/<user>), output directly to stdout — no file needed since these are short listings.
+For large threads (>8000 chars), the bot automatically saves a JSON file and sends it to the user.
+If the user wants to explore a large thread, suggest they use /reddit with the post URL — the bot will handle the JSON file workflow automatically.
 
 Semantic mappings for natural language Reddit queries:
 - "today" / "today's top" → --sort top --time day

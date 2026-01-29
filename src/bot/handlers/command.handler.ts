@@ -27,6 +27,7 @@ import { getTTSSettings, setTTSEnabled, setTTSVoice, setTTSAutoplay } from '../.
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
 import { executeVReddit } from '../../reddit/vreddit.js';
+import { redditFetch, type RedditFetchOptions } from '../../reddit/redditfetch.js';
 import { fmtTokens, getProgressBar } from './message.handler.js';
 import {
   detectPlatform,
@@ -52,6 +53,29 @@ async function replyMd(ctx: Context, text: string): Promise<void> {
 // Escape dynamic text for MarkdownV2
 function esc(text: string): string {
   return escapeMarkdownV2(text);
+}
+
+/** Build status lines appended to project confirmation messages. */
+export function projectStatusSuffix(chatId: number): string {
+  const model = getModel(chatId);
+  const dangerous = isDangerousMode() ? '⚠️ ENABLED' : 'Disabled';
+  const created = new Date().toLocaleString();
+  const session = sessionManager.getSession(chatId);
+  const sessionId = session?.claudeSessionId;
+
+  let suffix = `\n• *Model:* ${esc(model)}\n• *Created:* ${esc(created)}\n• *Dangerous Mode:* ${esc(dangerous)}`;
+  if (sessionId) {
+    suffix += `\n• *Session ID:* \`${esc(sessionId)}\``;
+    suffix += `\n\n💡 To continue this session from the terminal, copy the command below\\.`;
+  } else {
+    suffix += `\n• *Session ID:* _pending — send a message to start_`;
+  }
+  return suffix;
+}
+
+/** The copyable command sent as a separate message. */
+export function resumeCommandMessage(sessionId: string): string {
+  return `\`claude --resume ${sessionId}\``;
 }
 
 const OPENAI_TTS_VOICES = [
@@ -349,9 +373,14 @@ export async function handleProjectCallback(ctx: Context): Promise<void> {
 
     await ctx.answerCallbackQuery({ text: 'Project set' });
     await ctx.editMessageText(
-      `✅ Project: *${esc(path.basename(state.current))}*\n\nYou can now chat with Claude about this project\\!`,
+      `✅ Project: *${esc(path.basename(state.current))}*\n\nYou can now chat with Claude about this project\\!${projectStatusSuffix(chatId)}`,
       { parse_mode: 'MarkdownV2' }
     );
+
+    const s = sessionManager.getSession(chatId);
+    if (s?.claudeSessionId) {
+      await replyMd(ctx, resumeCommandMessage(s.claudeSessionId));
+    }
     return;
   }
 
@@ -600,7 +629,12 @@ export async function handleProject(ctx: Context): Promise<void> {
   sessionManager.setWorkingDirectory(chatId, projectPath);
   clearConversation(chatId);
 
-  await replyMd(ctx, `✅ Project: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!`);
+  await replyMd(ctx, `✅ Project: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!${projectStatusSuffix(chatId)}`);
+
+  const s = sessionManager.getSession(chatId);
+  if (s?.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(s.claudeSessionId));
+  }
 }
 
 export async function handleNewProject(ctx: Context): Promise<void> {
@@ -631,7 +665,12 @@ export async function handleNewProject(ctx: Context): Promise<void> {
   sessionManager.setWorkingDirectory(chatId, projectPath);
   clearConversation(chatId);
 
-  await replyMd(ctx, `✅ Created and opened: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!`);
+  await replyMd(ctx, `✅ Created and opened: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!${projectStatusSuffix(chatId)}`);
+
+  const s = sessionManager.getSession(chatId);
+  if (s?.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(s.claudeSessionId));
+  }
 }
 
 function listProjects(): string[] {
@@ -1187,14 +1226,16 @@ export async function handleResume(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 
-  const history = sessionManager.getSessionHistory(chatId, 5);
+  const history = sessionManager.getSessionHistory(chatId, 10);
+  // Only show sessions that actually have a Claude session (were chatted in)
+  const resumable = history.filter((entry) => entry.claudeSessionId);
 
-  if (history.length === 0) {
-    await replyMd(ctx, 'ℹ️ No session history found\\.\n\nUse `/project <name>` to start a new session\\.');
+  if (resumable.length === 0) {
+    await replyMd(ctx, 'ℹ️ No resumable sessions found\\.\n\nSessions need at least one Claude response to be resumable\\.\nUse `/project <name>` to start a new session\\.');
     return;
   }
 
-  const keyboard = history.map((entry) => {
+  const keyboard = resumable.map((entry) => {
     const date = new Date(entry.lastActivity);
     const timeAgo = formatTimeAgo(date);
 
@@ -1234,9 +1275,14 @@ export async function handleResumeCallback(ctx: Context): Promise<void> {
   await ctx.answerCallbackQuery({ text: 'Session resumed!' });
   await ctx.editMessageText(
     `✅ Resumed session for *${esc(path.basename(session.workingDirectory))}*\n\n` +
-    `Working directory: \`${esc(session.workingDirectory)}\``,
+    `Working directory: \`${esc(session.workingDirectory)}\`${projectStatusSuffix(chatId)}`,
     { parse_mode: 'MarkdownV2' }
   );
+
+  // Send session ID as separate message for easy copying
+  if (session.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(session.claudeSessionId));
+  }
 }
 
 export async function handleContinue(ctx: Context): Promise<void> {
@@ -1254,8 +1300,13 @@ export async function handleContinue(ctx: Context): Promise<void> {
 
   await replyMd(ctx,
     `✅ Continuing *${esc(path.basename(session.workingDirectory))}*\n\n` +
-    `Working directory: \`${esc(session.workingDirectory)}\``
+    `Working directory: \`${esc(session.workingDirectory)}\`${projectStatusSuffix(chatId)}`
   );
+
+  // Send session ID as separate message for easy copying
+  if (session.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(session.claudeSessionId));
+  }
 }
 
 export async function handleLoop(ctx: Context): Promise<void> {
@@ -1559,35 +1610,8 @@ function ensureMediumOutputDir(ctx: Context, url: string): string {
 }
 
 
-async function runRedditFetch(
-  ctx: Context,
-  scriptPath: string,
-  tokens: string[]
-): Promise<{ stdout: string; stderr: string }> {
-  const scriptDir = path.dirname(scriptPath);
-
-  return new Promise((resolve, reject) => {
-    execFile(
-      'python3',
-      [scriptPath, ...tokens],
-      {
-        timeout: config.REDDITFETCH_TIMEOUT_MS,
-        maxBuffer: 10 * 1024 * 1024, // 10 MB
-        cwd: scriptDir,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject({ error, stdout: stdout || '', stderr: stderr || '' });
-          return;
-        }
-        resolve({ stdout: stdout || '', stderr: stderr || '' });
-      }
-    );
-  });
-}
-
 /**
- * Execute redditfetch.py and send the result to the user.
+ * Execute native Reddit fetch and send the result to the user.
  * Exported so message.handler.ts can reuse it for ForceReply flow.
  */
 export async function executeRedditFetch(
@@ -1599,34 +1623,54 @@ export async function executeRedditFetch(
   const tokens = tokenizeArgs(args);
   const { cleanTokens, format, hadOutputFlag } = parseRedditArgs(tokens);
 
-  // Inject default --limit if not provided
-  if (!cleanTokens.includes('--limit') && !cleanTokens.includes('-l')) {
-    cleanTokens.push('--limit', String(config.REDDITFETCH_DEFAULT_LIMIT));
+  // Extract targets and options from cleanTokens
+  const targets: string[] = [];
+  const options: RedditFetchOptions = {
+    format: format || 'markdown',
+    limit: config.REDDITFETCH_DEFAULT_LIMIT,
+    depth: config.REDDITFETCH_DEFAULT_DEPTH,
+  };
+
+  for (let i = 0; i < cleanTokens.length; i++) {
+    const token = cleanTokens[i];
+    if (token === '--sort' && cleanTokens[i + 1]) {
+      options.sort = cleanTokens[++i];
+    } else if (token === '--limit' && cleanTokens[i + 1]) {
+      options.limit = parseInt(cleanTokens[++i], 10);
+    } else if ((token === '-l') && cleanTokens[i + 1]) {
+      options.limit = parseInt(cleanTokens[++i], 10);
+    } else if (token === '--depth' && cleanTokens[i + 1]) {
+      options.depth = parseInt(cleanTokens[++i], 10);
+    } else if (token === '--time' && cleanTokens[i + 1]) {
+      options.timeFilter = cleanTokens[++i];
+    } else if (token === '-f' || token === '--format') {
+      // Already captured by parseRedditArgs, skip value
+      i++;
+    } else {
+      targets.push(token);
+    }
   }
 
-  // Inject default --depth if not provided
-  if (!cleanTokens.includes('--depth')) {
-    cleanTokens.push('--depth', String(config.REDDITFETCH_DEFAULT_DEPTH));
+  if (targets.length === 0) {
+    await replyMd(ctx, '❌ No target specified\\. Example: `/reddit r/ClaudeAI` or `/reddit <post\\-url>`');
+    return;
   }
 
-  const scriptPath = config.REDDITFETCH_PATH;
   try {
-    const { stdout, stderr } = await runRedditFetch(ctx, scriptPath, cleanTokens);
-    const output = stdout.trim();
+    const output = await redditFetch(targets, options);
 
-    if (!output) {
-      const hint = (stderr || '').trim();
-      const errorInfo = hint ? `\n\n_${esc(hint.substring(0, 200))}_` : '';
-      await replyMd(ctx, `❌ No results returned\\.${errorInfo}`);
+    if (!output.trim()) {
+      await replyMd(ctx, '❌ No results returned\\.');
       return;
     }
 
+    // Large thread JSON fallback
     if (!format && output.length > config.REDDITFETCH_JSON_THRESHOLD_CHARS) {
-      const outputPath = buildRedditOutputPath(ctx, cleanTokens);
-      const jsonTokens = [...cleanTokens, '--format', 'json', '--output', outputPath];
-
       try {
-        await runRedditFetch(ctx, scriptPath, jsonTokens);
+        const jsonOutput = await redditFetch(targets, { ...options, format: 'json' });
+        const outputPath = buildRedditOutputPath(ctx, targets);
+
+        fs.writeFileSync(outputPath, jsonOutput, 'utf-8');
 
         const sent = await messageSender.sendDocument(
           ctx,
@@ -1643,7 +1687,6 @@ export async function executeRedditFetch(
         console.error('[Reddit] JSON fallback failed:', jsonError);
         await messageSender.sendMessage(ctx, output);
       }
-
       return;
     }
 
@@ -1653,21 +1696,15 @@ export async function executeRedditFetch(
       await replyMd(ctx, 'ℹ️ Note: `-o/--output` is ignored in chat mode\\. I can save JSON automatically for large threads\\.');
     }
   } catch (err: unknown) {
-    const error = err as { error?: Error; stderr?: string };
-    const stderrText = (error?.stderr || '').trim();
+    const errorMessage = err instanceof Error ? err.message : String(err);
     let userMessage: string;
 
-    if (stderrText.includes('Missing credentials') || stderrText.includes('REDDIT_CLIENT_ID')) {
-      userMessage = '❌ Reddit credentials not configured\\.\n\nSet `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD` in the redditfetch \\.env file\\.';
-    } else if (stderrText.includes('ModuleNotFoundError')) {
-      const modMatch = stderrText.match(/No module named '(\w+)'/);
-      const modName = modMatch ? modMatch[1] : 'unknown';
-      userMessage = `❌ Missing Python dependency: \`${esc(modName)}\`\n\nRun: \`pip install ${esc(modName)}\``;
-    } else if (error?.error && (error.error as { killed?: boolean }).killed) {
+    if (errorMessage.includes('Missing Reddit credentials') || errorMessage.includes('REDDIT_CLIENT_ID')) {
+      userMessage = "❌ Reddit credentials not configured\\.\n\nSet `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD` in claudegram's `\\.env` file\\.";
+    } else if (errorMessage.includes('timed out') || errorMessage.includes('AbortError')) {
       userMessage = '❌ Reddit fetch timed out\\.';
     } else {
-      const detail = stderrText || (error?.error?.message || 'Unknown error');
-      userMessage = `❌ Reddit fetch failed: ${esc(detail.substring(0, 300))}`;
+      userMessage = `❌ Reddit fetch failed: ${esc(errorMessage.substring(0, 300))}`;
     }
 
     await replyMd(ctx, userMessage);
