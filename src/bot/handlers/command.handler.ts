@@ -985,19 +985,33 @@ export async function handleContext(ctx: Context): Promise<void> {
 }
 
 export async function handleBotStatus(ctx: Context): Promise<void> {
-  if (!botctlExists()) {
-    await replyMd(ctx, '❌ Bot control script not found\\.\n\nExpected at `scripts/claudegram-botctl.sh`\\.');
-    return;
-  }
+  const uptimeSec = process.uptime();
+  const hours = Math.floor(uptimeSec / 3600);
+  const minutes = Math.floor((uptimeSec % 3600) / 60);
+  const seconds = Math.floor(uptimeSec % 60);
+  const uptimeStr = hours > 0
+    ? `${hours}h ${minutes}m ${seconds}s`
+    : minutes > 0
+      ? `${minutes}m ${seconds}s`
+      : `${seconds}s`;
 
-  try {
-    const { stdout, stderr } = await runBotCtl(['status']);
-    const output = (stdout || stderr || 'No output').trim();
-    await ctx.reply(`Bot status (${config.BOT_MODE}):\\n${output}`, { parse_mode: undefined });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    await ctx.reply(`Bot status error (${config.BOT_MODE}):\\n${errorMessage}`, { parse_mode: undefined });
-  }
+  const mode = config.BOT_MODE === 'prod' ? 'Production' : 'Development';
+  const chatId = ctx.chat?.id;
+  const model = chatId ? getModel(chatId) : 'opus';
+  const streaming = config.STREAMING_MODE || 'streaming';
+  const pid = process.pid;
+  const memMB = (process.memoryUsage.rss() / 1024 / 1024).toFixed(1);
+
+  const msg =
+    `🟢 *${esc(config.BOT_NAME)} is running*\n\n` +
+    `*Mode:* ${esc(mode)}\n` +
+    `*Uptime:* ${esc(uptimeStr)}\n` +
+    `*PID:* ${pid}\n` +
+    `*Memory:* ${esc(memMB)} MB\n` +
+    `*Model:* ${esc(model)}\n` +
+    `*Streaming:* ${esc(streaming)}`;
+
+  await replyMd(ctx, msg);
 }
 
 export async function handleRestartBot(ctx: Context): Promise<void> {
