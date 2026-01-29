@@ -22,7 +22,7 @@ import {
 } from '../../claude/request-queue.js';
 import { createTelegraphFromFile, createTelegraphPage } from '../../telegram/telegraph.js';
 import { isMediumUrl, fetchMediumArticle, FreediumArticle } from '../../medium/freedium.js';
-import { escapeMarkdownV2 } from '../../telegram/markdown.js';
+import { escapeMarkdownV2 as esc } from '../../telegram/markdown.js';
 import { getTTSSettings, setTTSEnabled, setTTSVoice, setTTSAutoplay } from '../../tts/tts-settings.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
@@ -47,11 +47,6 @@ import { execFile, spawn } from 'child_process';
 // Helper for consistent MarkdownV2 replies
 async function replyMd(ctx: Context, text: string): Promise<void> {
   await ctx.reply(text, { parse_mode: 'MarkdownV2' });
-}
-
-// Escape dynamic text for MarkdownV2
-function esc(text: string): string {
-  return escapeMarkdownV2(text);
 }
 
 const OPENAI_TTS_VOICES = [

@@ -4,11 +4,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { config } from '../config.js';
-import { escapeMarkdownV2 } from '../telegram/markdown.js';
 
 const USER_AGENT = 'claudegram/1.0';
 const DASH_FETCH_TIMEOUT_MS = 15000;
-const PAGE_FETCH_TIMEOUT_MS = 15000;
 const VIDEO_DOWNLOAD_TIMEOUT_SEC = 120;
 const FFMPEG_TIMEOUT_MS = 120000;
 const FFMPEG_COMPRESS_TIMEOUT_MS = 300000; // 5 min for compression
@@ -17,10 +15,6 @@ type VideoSource =
   | { type: 'dash'; url: string }
   | { type: 'external'; url: string }
   | null;
-
-function esc(text: string): string {
-  return escapeMarkdownV2(text);
-}
 
 /**
  * Validate URL protocol to prevent SSRF attacks.
@@ -117,6 +111,8 @@ function extractExternalUrlFromHtml(html: string): string | null {
   // Skip Reddit self-links and images
   if (url.includes('reddit.com') || url.includes('redd.it')) return null;
   if (/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)) return null;
+  // Validate protocol to prevent SSRF
+  if (!isValidProtocol(url)) return null;
   return url;
 }
 

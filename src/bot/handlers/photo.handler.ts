@@ -1,5 +1,4 @@
 import { Context } from 'grammy';
-import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../../config.js';
@@ -14,15 +13,12 @@ import {
   getQueuePosition,
   setAbortController,
 } from '../../claude/request-queue.js';
-import { escapeMarkdownV2 } from '../../telegram/markdown.js';
+import { escapeMarkdownV2 as esc } from '../../telegram/markdown.js';
 import { getStreamingMode } from './command.handler.js';
+import { downloadFileSecure, getTelegramFileUrl } from '../../utils/download.js';
 import { type PhotoSize } from 'grammy/types';
 
 const UPLOADS_DIR = '.claudegram/uploads';
-
-function esc(text: string): string {
-  return escapeMarkdownV2(text);
-}
 
 function sanitizeFileName(name: string): string {
   return path.basename(name).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -42,56 +38,13 @@ function pickLargestPhoto(photoSizes: PhotoSize[]): PhotoSize {
   });
 }
 
-/**
- * Download a file from a URL using curl with stdin config.
- * Prevents token exposure in process args (visible via `ps aux`).
- */
-function downloadFileSecure(fileUrl: string, destPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const curlArgs = [
-      '-sS', '-f',
-      '--connect-timeout', '10',
-      '--max-time', '30',
-      '--retry', '2',
-      '--retry-delay', '2',
-      '-o', destPath,
-      '-K', '-'  // Read config from stdin
-    ];
-
-    const child = spawn('curl', curlArgs, { timeout: 60_000 });
-    let stderr = '';
-
-    child.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    child.on('error', (err) => {
-      reject(new Error(`Failed to spawn curl: ${err.message}`));
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        const msg = stderr.trim() || `curl exited with code ${code}`;
-        reject(new Error(`Failed to download file: ${msg}`));
-      }
-    });
-
-    // Write URL via stdin config format to avoid process arg exposure
-    child.stdin.write(`url = "${fileUrl}"\n`);
-    child.stdin.end();
-  });
-}
-
 async function downloadTelegramFile(ctx: Context, fileId: string, destPath: string): Promise<string> {
   const file = await ctx.api.getFile(fileId);
   if (!file.file_path) {
     throw new Error('Telegram did not provide file_path for this image.');
   }
 
-  const fileUrl = `https://api.telegram.org/file/bot${config.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-
+  const fileUrl = getTelegramFileUrl(config.TELEGRAM_BOT_TOKEN, file.file_path);
   await downloadFileSecure(fileUrl, destPath);
 
   return file.file_path;
