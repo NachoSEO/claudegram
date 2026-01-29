@@ -135,7 +135,7 @@ Targets: post URL, post ID, r/<subreddit>, u/<username>, share links (reddit.com
 Flags: --sort <hot|new|top|rising>, --limit <n>, --time <day|week|month|year|all>, --depth <n>, -f <markdown|json>
 The tool handles authentication and formatting automatically.
 
-For large threads (>8000 chars), the bot automatically saves a JSON file and sends it to the user.
+For large threads (>${config.REDDITFETCH_JSON_THRESHOLD_CHARS} chars), the bot automatically saves a JSON file and sends it to the user.
 If the user wants to explore a large thread, suggest they use /reddit with the post URL — the bot will handle the JSON file workflow automatically.
 
 Semantic mappings for natural language Reddit queries:

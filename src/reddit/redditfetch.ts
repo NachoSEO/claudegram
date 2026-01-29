@@ -279,8 +279,11 @@ async function fetchPost(
     data: { children: Array<{ data: Record<string, unknown>; kind: string }> };
   }>;
 
-  const post = data[0].data.children[0].data;
-  const commentsRaw = data[1].data.children;
+  const post = data?.[0]?.data?.children?.[0]?.data;
+  if (!post) {
+    throw new Error(`Reddit API returned no post for id ${postId}`);
+  }
+  const commentsRaw = data?.[1]?.data?.children ?? [];
   const comments = flattenComments(commentsRaw, depth);
 
   return { post, comments };
@@ -615,6 +618,9 @@ export async function redditFetch(
     throw new Error('No results.');
   }
 
+  if (format === 'json' && results.length > 1) {
+    return `[\n${results.join(',\n')}\n]`;
+  }
   const separator = format === 'markdown' ? '\n\n---\n\n' : '\n';
   return results.join(separator);
 }

@@ -59,8 +59,10 @@ function esc(text: string): string {
 export function projectStatusSuffix(chatId: number): string {
   const model = getModel(chatId);
   const dangerous = isDangerousMode() ? '⚠️ ENABLED' : 'Disabled';
-  const created = new Date().toLocaleString();
   const session = sessionManager.getSession(chatId);
+  const created = session?.createdAt
+    ? new Date(session.createdAt).toLocaleString()
+    : new Date().toLocaleString();
   const sessionId = session?.claudeSessionId;
 
   let suffix = `\n• *Model:* ${esc(model)}\n• *Created:* ${esc(created)}\n• *Dangerous Mode:* ${esc(dangerous)}`;
@@ -1649,11 +1651,14 @@ export async function executeRedditFetch(
     if (token === '--sort' && cleanTokens[i + 1]) {
       options.sort = cleanTokens[++i];
     } else if (token === '--limit' && cleanTokens[i + 1]) {
-      options.limit = parseInt(cleanTokens[++i], 10);
+      const parsed = parseInt(cleanTokens[++i], 10);
+      if (!Number.isNaN(parsed) && parsed > 0) options.limit = parsed;
     } else if ((token === '-l') && cleanTokens[i + 1]) {
-      options.limit = parseInt(cleanTokens[++i], 10);
+      const parsed = parseInt(cleanTokens[++i], 10);
+      if (!Number.isNaN(parsed) && parsed > 0) options.limit = parsed;
     } else if (token === '--depth' && cleanTokens[i + 1]) {
-      options.depth = parseInt(cleanTokens[++i], 10);
+      const parsed = parseInt(cleanTokens[++i], 10);
+      if (!Number.isNaN(parsed) && parsed > 0) options.depth = parsed;
     } else if (token === '--time' && cleanTokens[i + 1]) {
       options.timeFilter = cleanTokens[++i];
     } else if (token === '-f' || token === '--format') {
@@ -1813,9 +1818,12 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
           ? output.slice(0, CHAT_INLINE_LIMIT).trimEnd()
           : output;
 
-        let prompt = `I just fetched Reddit content and saved it to ${mdPath}. Here's the content:\n\n${inlineContent}`;
+        // Use relative display path to avoid leaking absolute server paths in conversation
+        const displayPath = `.claudegram/reddit/${path.basename(mdPath)}`;
+
+        let prompt = `I just fetched Reddit content and saved it to ${displayPath}. Here's the content:\n\n${inlineContent}`;
         if (truncated) {
-          prompt += `\n\n[Content truncated — full content (${output.length} chars) is saved at ${mdPath}.]`;
+          prompt += `\n\n[Content truncated — full content (${output.length} chars) is saved at ${displayPath}.]`;
         }
         prompt += '\n\nPlease summarize the key points and let me know if you have any questions.';
 
@@ -1880,6 +1888,17 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
 // Pending Freedium results keyed by chatId, with 5-min TTL
 const pendingMediumResults = new Map<number, { article: FreediumArticle; messageId: number; expiresAt: number }>();
 const MEDIUM_RESULT_TTL_MS = 5 * 60 * 1000;
+
+// Periodic cleanup of expired pending results to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [chatId, entry] of pendingRedditResults) {
+    if (now > entry.expiresAt) pendingRedditResults.delete(chatId);
+  }
+  for (const [chatId, entry] of pendingMediumResults) {
+    if (now > entry.expiresAt) pendingMediumResults.delete(chatId);
+  }
+}, REDDIT_RESULT_TTL_MS);
 
 /**
  * Fetch a Medium article via Freedium and present inline action buttons.
