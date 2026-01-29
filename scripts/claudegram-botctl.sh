@@ -6,7 +6,6 @@ export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_FILE="${ROOT_DIR}/claudegram.dev.log"
 
 MODE="${MODE:-dev}"
 ACTION="${1:-status}"
@@ -14,6 +13,8 @@ if [[ "${ACTION}" == "dev" || "${ACTION}" == "prod" ]]; then
   MODE="${ACTION}"
   ACTION="${2:-status}"
 fi
+
+LOG_FILE="${ROOT_DIR}/claudegram.${MODE}.log"
 
 DEV_PATTERNS=(
   "tsx watch src/index.ts"
@@ -24,6 +25,7 @@ DEV_PATTERNS=(
 )
 
 PROD_PATTERNS=(
+  "node dist/index.js"
   "node .*dist/index.js"
   "npm start"
 )
