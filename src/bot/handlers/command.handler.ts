@@ -1750,9 +1750,10 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
 
   const action = data.replace('reddit_action:', '');
 
-  // Look up pending result
+  // Look up pending result and validate message_id to avoid cross-result mixups
   const pending = pendingRedditResults.get(chatId);
-  if (!pending || Date.now() > pending.expiresAt) {
+  const callbackMsgId = ctx.callbackQuery?.message?.message_id;
+  if (!pending || callbackMsgId !== pending.messageId || Date.now() > pending.expiresAt) {
     pendingRedditResults.delete(chatId);
     await ctx.answerCallbackQuery({ text: 'Result expired. Please fetch again.' });
     return;
