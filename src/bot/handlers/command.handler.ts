@@ -1610,8 +1610,21 @@ function ensureMediumOutputDir(ctx: Context, url: string): string {
 }
 
 
+// Pending Reddit fetch results keyed by chatId, with 5-min TTL
+const pendingRedditResults = new Map<number, {
+  output: string;
+  targets: string[];
+  options: RedditFetchOptions;
+  format: RedditFormat | null;
+  hadOutputFlag: boolean;
+  messageId: number;
+  expiresAt: number;
+}>();
+const REDDIT_RESULT_TTL_MS = 5 * 60 * 1000;
+
 /**
- * Execute native Reddit fetch and send the result to the user.
+ * Execute native Reddit fetch, cache the result, and show an inline picker
+ * so the user can choose File / Chat / Both.
  * Exported so message.handler.ts can reuse it for ForceReply flow.
  */
 export async function executeRedditFetch(
@@ -1656,6 +1669,9 @@ export async function executeRedditFetch(
     return;
   }
 
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
   try {
     const output = await redditFetch(targets, options);
 
@@ -1664,37 +1680,43 @@ export async function executeRedditFetch(
       return;
     }
 
-    // Large thread JSON fallback
-    if (!format && output.length > config.REDDITFETCH_JSON_THRESHOLD_CHARS) {
-      try {
-        const jsonOutput = await redditFetch(targets, { ...options, format: 'json' });
-        const outputPath = buildRedditOutputPath(ctx, targets);
+    // Build a short preview for the picker message
+    const charCount = output.length;
+    const targetLabel = targets.join(', ');
+    const previewSnippet = output.length > 200
+      ? output.slice(0, 200).trimEnd() + '...'
+      : output;
 
-        fs.writeFileSync(outputPath, jsonOutput, 'utf-8');
+    const previewText =
+      `📡 *Reddit Fetch*\n` +
+      `Target: \`${esc(targetLabel)}\`\n` +
+      `Size: _${charCount} chars_\n\n` +
+      `${esc(previewSnippet)}\n\n` +
+      `_Choose how to consume this content:_`;
 
-        const sent = await messageSender.sendDocument(
-          ctx,
-          outputPath,
-          `📎 Reddit JSON saved: ${path.basename(outputPath)}`
-        );
+    const msg = await ctx.reply(previewText, {
+      parse_mode: 'MarkdownV2',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '📄 File', callback_data: 'reddit_action:file' },
+            { text: '💬 Chat', callback_data: 'reddit_action:chat' },
+            { text: '📄💬 Both', callback_data: 'reddit_action:both' },
+          ],
+        ],
+      },
+    });
 
-        const notice = sent
-          ? `Large thread detected \\(${output.length} chars\\) — sent JSON file for structured review\\.`
-          : `Large thread detected \\(${output.length} chars\\) — JSON saved at \`${esc(outputPath)}\`\\.`;
-
-        await replyMd(ctx, notice);
-      } catch (jsonError) {
-        console.error('[Reddit] JSON fallback failed:', jsonError);
-        await messageSender.sendMessage(ctx, output);
-      }
-      return;
-    }
-
-    await messageSender.sendMessage(ctx, output);
-
-    if (hadOutputFlag) {
-      await replyMd(ctx, 'ℹ️ Note: `-o/--output` is ignored in chat mode\\. I can save JSON automatically for large threads\\.');
-    }
+    // Cache the result for callback handling
+    pendingRedditResults.set(chatId, {
+      output,
+      targets,
+      options,
+      format,
+      hadOutputFlag,
+      messageId: msg.message_id,
+      expiresAt: Date.now() + REDDIT_RESULT_TTL_MS,
+    });
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     let userMessage: string;
@@ -1708,6 +1730,150 @@ export async function executeRedditFetch(
     }
 
     await replyMd(ctx, userMessage);
+  }
+}
+
+/**
+ * Handle inline keyboard callbacks for Reddit action picker (File / Chat / Both).
+ */
+export async function handleRedditActionCallback(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith('reddit_action:')) return;
+
+  const action = data.replace('reddit_action:', '');
+
+  // Look up pending result
+  const pending = pendingRedditResults.get(chatId);
+  if (!pending || Date.now() > pending.expiresAt) {
+    pendingRedditResults.delete(chatId);
+    await ctx.answerCallbackQuery({ text: 'Result expired. Please fetch again.' });
+    return;
+  }
+
+  await ctx.answerCallbackQuery();
+
+  const { output, targets, options, format, hadOutputFlag } = pending;
+  const doFile = action === 'file' || action === 'both';
+  const doChat = action === 'chat' || action === 'both';
+
+  try {
+    // ── File mode ──────────────────────────────────────────────────
+    if (doFile) {
+      // Large thread JSON fallback
+      if (!format && output.length > config.REDDITFETCH_JSON_THRESHOLD_CHARS) {
+        try {
+          const jsonOutput = await redditFetch(targets, { ...options, format: 'json' });
+          const outputPath = buildRedditOutputPath(ctx, targets);
+          fs.writeFileSync(outputPath, jsonOutput, 'utf-8');
+
+          const sent = await messageSender.sendDocument(
+            ctx,
+            outputPath,
+            `📎 Reddit JSON saved: ${path.basename(outputPath)}`
+          );
+
+          const notice = sent
+            ? `Large thread detected \\(${output.length} chars\\) — sent JSON file for structured review\\.`
+            : `Large thread detected \\(${output.length} chars\\) — JSON saved at \`${esc(outputPath)}\`\\.`;
+
+          await replyMd(ctx, notice);
+        } catch (jsonError) {
+          console.error('[Reddit] JSON fallback failed:', jsonError);
+          await messageSender.sendMessage(ctx, output);
+        }
+      } else {
+        await messageSender.sendMessage(ctx, output);
+      }
+
+      if (hadOutputFlag) {
+        await replyMd(ctx, 'ℹ️ Note: `-o/--output` is ignored in chat mode\\. I can save JSON automatically for large threads\\.');
+      }
+    }
+
+    // ── Chat mode ──────────────────────────────────────────────────
+    if (doChat) {
+      const session = sessionManager.getSession(chatId);
+      if (!session) {
+        await replyMd(ctx, '⚠️ No project set\\. Use `/project` first to enable Chat mode\\.');
+      } else {
+        // 1. Save content to disk
+        const dir = ensureRedditOutputDir(ctx);
+        const slug = (targets[0] || 'reddit').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40);
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const mdPath = path.join(dir, `reddit_${slug}_${stamp}.md`);
+        fs.writeFileSync(mdPath, output, 'utf-8');
+
+        // 2. Build prompt with inline content (truncated for large results)
+        const CHAT_INLINE_LIMIT = 3000;
+        const truncated = output.length > CHAT_INLINE_LIMIT;
+        const inlineContent = truncated
+          ? output.slice(0, CHAT_INLINE_LIMIT).trimEnd()
+          : output;
+
+        let prompt = `I just fetched Reddit content and saved it to ${mdPath}. Here's the content:\n\n${inlineContent}`;
+        if (truncated) {
+          prompt += `\n\n[Content truncated — full content (${output.length} chars) is saved at ${mdPath}.]`;
+        }
+        prompt += '\n\nPlease summarize the key points and let me know if you have any questions.';
+
+        // 3. Queue a streaming response
+        try {
+          await queueRequest(chatId, prompt, async () => {
+            if (getStreamingMode() === 'streaming') {
+              await messageSender.startStreaming(ctx);
+              const abortController = new AbortController();
+              setAbortController(chatId, abortController);
+              try {
+                const response = await sendToAgent(chatId, prompt, {
+                  onProgress: (progressText) => {
+                    messageSender.updateStream(ctx, progressText);
+                  },
+                  abortController,
+                });
+                await messageSender.finishStreaming(ctx, response.text);
+                await maybeSendVoiceReply(ctx, response.text);
+              } catch (error) {
+                await messageSender.cancelStreaming(ctx);
+                throw error;
+              }
+            } else {
+              await ctx.replyWithChatAction('typing');
+              const abortController = new AbortController();
+              setAbortController(chatId, abortController);
+              const response = await sendToAgent(chatId, prompt, { abortController });
+              await messageSender.sendMessage(ctx, response.text);
+              await maybeSendVoiceReply(ctx, response.text);
+            }
+          });
+        } catch (error) {
+          if ((error as Error).message !== 'Queue cleared') {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            await replyMd(ctx, `❌ Chat failed: ${esc(errorMessage)}`);
+          }
+        }
+      }
+    }
+
+    // Edit the original picker message to show what was selected
+    const actionLabel = action === 'file' ? '📄 File' : action === 'chat' ? '💬 Chat' : '📄💬 Both';
+    try {
+      const targetLabel = targets.join(', ');
+      await ctx.editMessageText(
+        `📡 *Reddit Fetch* — ${esc(actionLabel)}\n` +
+        `Target: \`${esc(targetLabel)}\` · ${output.length} chars`,
+        { parse_mode: 'MarkdownV2' }
+      );
+    } catch { /* ignore edit failure */ }
+
+    // Clean up
+    pendingRedditResults.delete(chatId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    await replyMd(ctx, `❌ Action failed: ${esc(message.substring(0, 300))}`);
+    pendingRedditResults.delete(chatId);
   }
 }
 
