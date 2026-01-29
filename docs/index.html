@@ -1093,6 +1093,81 @@
         padding: 0.625rem 0.5rem;
       }
     }
+
+    /* Contributors Section */
+    .contributors-section {
+      padding: 6rem 0;
+    }
+
+    .contributors-grid {
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .contributor-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 2rem;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      text-decoration: none;
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      min-width: 180px;
+      opacity: 0;
+      transform: translateY(30px);
+    }
+
+    .contributor-card.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .contributor-card:hover {
+      transform: translateY(-5px);
+      border-color: var(--neon-cyan);
+      box-shadow: var(--glow-cyan);
+    }
+
+    .contributor-avatar {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      border: 3px solid var(--glass-border);
+      transition: border-color 0.3s;
+    }
+
+    .contributor-card:hover .contributor-avatar {
+      border-color: var(--neon-cyan);
+    }
+
+    .contributor-name {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .contributor-role {
+      font-size: 0.85rem;
+      color: var(--neon-cyan);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    @media (max-width: 768px) {
+      .contributors-grid {
+        flex-direction: column;
+        align-items: center;
+      }
+      .contributor-card {
+        width: 100%;
+        max-width: 280px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -1113,6 +1188,7 @@
           <a href="#getting-started">Getting Started</a>
           <a href="#demo">Demo</a>
           <a href="#commands">Commands</a>
+          <a href="#contributors">Contributors</a>
           <a href="https://github.com/NachoSEO/claudegram">GitHub</a>
         </div>
       </div>
@@ -1341,6 +1417,46 @@
             <h3>Secure by Default</h3>
             <p>Runs on your local machine. Whitelist specific Telegram users. Your code never leaves your network.</p>
           </div>
+          <div class="feature-card">
+            <div class="feature-icon">🎤</div>
+            <h3>Voice Transcription</h3>
+            <p>Send voice messages and have them transcribed with Groq Whisper. Just talk to Claude instead of typing.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🔊</div>
+            <h3>Text-to-Speech</h3>
+            <p>Get Claude's responses as voice messages using Orpheus TTS. Toggle with /tts command.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📥</div>
+            <h3>Media Extraction</h3>
+            <p>Download videos from YouTube, TikTok, Instagram with /extract. Auto-detects URLs in messages.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🔴</div>
+            <h3>Reddit Integration</h3>
+            <p>Browse subreddits and download Reddit videos with /reddit and /vreddit commands.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📰</div>
+            <h3>Medium Reader</h3>
+            <p>Read Medium articles without paywalls using /medium. Full article content delivered to chat.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">📝</div>
+            <h3>Telegraph Output</h3>
+            <p>Export long responses to Telegraph for better readability with /telegraph command.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">💾</div>
+            <h3>Session Persistence</h3>
+            <p>Resume conversations across bot restarts with /resume and /continue. Browse history with /sessions.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🧠</div>
+            <h3>Model Picker</h3>
+            <p>Switch between Claude models (Opus, Sonnet, Haiku) with /model. Default: Opus for best results.</p>
+          </div>
         </div>
       </div>
     </section>
@@ -1382,6 +1498,7 @@
           <h2 class="section-title">Commands</h2>
         </div>
         <div class="commands-grid">
+          <!-- Project Management -->
           <div class="command-row">
             <code class="command-code">/project &lt;name&gt;</code>
             <span class="command-desc">Open a project from your workspace directory</span>
@@ -1398,16 +1515,124 @@
             <code class="command-code">/status</code>
             <span class="command-desc">Show current session and project info</span>
           </div>
+          <!-- Session Management -->
+          <div class="command-row">
+            <code class="command-code">/resume</code>
+            <span class="command-desc">Resume the last session for current project</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/continue</code>
+            <span class="command-desc">Continue last session after bot restart</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/sessions</code>
+            <span class="command-desc">Browse and restore previous sessions</span>
+          </div>
+          <!-- Agent Modes -->
+          <div class="command-row">
+            <code class="command-code">/model</code>
+            <span class="command-desc">Switch Claude model (opus/sonnet/haiku)</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/mode</code>
+            <span class="command-desc">Toggle streaming vs wait response mode</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/plan</code>
+            <span class="command-desc">Enter plan mode for architecture discussions</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/explore</code>
+            <span class="command-desc">Enter explore mode for codebase analysis</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/loop</code>
+            <span class="command-desc">Toggle loop mode for continuous tasks</span>
+          </div>
+          <!-- Media & Content -->
+          <div class="command-row">
+            <code class="command-code">/extract &lt;url&gt;</code>
+            <span class="command-desc">Download media from YouTube, TikTok, Instagram</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/reddit &lt;sub&gt;</code>
+            <span class="command-desc">Browse subreddit posts</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/vreddit &lt;url&gt;</code>
+            <span class="command-desc">Download Reddit videos with audio</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/medium &lt;url&gt;</code>
+            <span class="command-desc">Read Medium articles without paywall</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/file &lt;path&gt;</code>
+            <span class="command-desc">Get a project file as Telegram download</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/telegraph</code>
+            <span class="command-desc">Export last response to Telegraph</span>
+          </div>
+          <!-- Voice & Audio -->
+          <div class="command-row">
+            <code class="command-code">/tts</code>
+            <span class="command-desc">Toggle text-to-speech for responses</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/transcribe</code>
+            <span class="command-desc">Transcribe audio without sending to agent</span>
+          </div>
+          <!-- Utility -->
+          <div class="command-row">
+            <code class="command-code">/context</code>
+            <span class="command-desc">Show current context window usage</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/cancel</code>
+            <span class="command-desc">Cancel current request</span>
+          </div>
+          <div class="command-row">
+            <code class="command-code">/commands</code>
+            <span class="command-desc">Show all available commands</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="contributors" class="contributors-section">
+      <div class="container">
+        <div class="section-header">
+          <p class="section-tag">Community</p>
+          <h2 class="section-title">Contributors</h2>
+        </div>
+        <div class="contributors-grid">
+          <a href="https://github.com/NachoSEO" class="contributor-card" target="_blank">
+            <img src="https://github.com/NachoSEO.png" alt="NachoSEO" class="contributor-avatar">
+            <span class="contributor-name">Nacho Mascort</span>
+            <span class="contributor-role">Creator</span>
+          </a>
+          <a href="https://github.com/lliWcWill" class="contributor-card" target="_blank">
+            <img src="https://github.com/lliWcWill.png" alt="lliWcWill" class="contributor-avatar">
+            <span class="contributor-name">lliWcWill</span>
+            <span class="contributor-role">Major Contributor</span>
+          </a>
+          <a href="https://github.com/procrypto" class="contributor-card" target="_blank">
+            <img src="https://github.com/procrypto.png" alt="procrypto" class="contributor-avatar">
+            <span class="contributor-name">procrypto</span>
+            <span class="contributor-role">Contributor</span>
+          </a>
         </div>
       </div>
     </section>
 
     <footer>
       <div class="footer-logo">⚡ Claudegram</div>
-      <p class="footer-text">Built with Claude Code SDK and grammY</p>
+      <p class="footer-text">Built with Claude Agent SDK and grammY</p>
       <div class="footer-links">
         <a href="https://github.com/NachoSEO/claudegram">GitHub</a>
         <a href="#getting-started">Documentation</a>
+        <a href="#contributors">Contributors</a>
         <a href="https://github.com/NachoSEO/claudegram/issues">Issues</a>
       </div>
     </footer>
@@ -1466,7 +1691,7 @@
     }, observerOptions);
 
     // Observe elements
-    document.querySelectorAll('.telegram-phone, .feature-card, .command-row, .step-item').forEach(el => {
+    document.querySelectorAll('.telegram-phone, .feature-card, .command-row, .step-item, .contributor-card').forEach(el => {
       observer.observe(el);
     });
 
@@ -1619,6 +1844,11 @@
     // Stagger step items
     document.querySelectorAll('.step-item').forEach((step, index) => {
       step.style.transitionDelay = `${index * 0.1}s`;
+    });
+
+    // Stagger contributor cards
+    document.querySelectorAll('.contributor-card').forEach((card, index) => {
+      card.style.transitionDelay = `${index * 0.15}s`;
     });
   </script>
 </body>
