@@ -62,10 +62,10 @@ async function sendUsageFooter(
   if (!config.CONTEXT_SHOW_USAGE || !usage) return;
   const u = usage;
   const pct = u.contextWindow > 0
-    ? Math.round(((u.inputTokens + u.outputTokens) / u.contextWindow) * 100)
+    ? Math.round(((u.inputTokens + u.outputTokens + u.cacheReadTokens) / u.contextWindow) * 100)
     : 0;
   const bar = getProgressBar(pct);
-  const footer = `${bar} ${pct}% context · ${fmtTokens(u.inputTokens + u.outputTokens)}/${fmtTokens(u.contextWindow)} · $${u.totalCostUsd.toFixed(4)} · ${u.numTurns} turns`;
+  const footer = `${bar} ${pct}% context · ${fmtTokens(u.inputTokens + u.outputTokens + u.cacheReadTokens)}/${fmtTokens(u.contextWindow)} · $${u.totalCostUsd.toFixed(4)} · ${u.numTurns} turns`;
   await ctx.reply(footer, { parse_mode: undefined });
 }
 

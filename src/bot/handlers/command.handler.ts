@@ -118,7 +118,9 @@ function runBotCtl(args: string[]): Promise<{ stdout: string; stderr: string }> 
       args,
       { cwd: PROJECT_ROOT, env: { ...process.env, MODE: config.BOT_MODE } },
       (error, stdout, stderr) => {
-        if (error) {
+        // Resolve with stdout even on non-zero exit codes (e.g. "status"
+        // returns exit 1 when the bot isn't running, which is valid output)
+        if (error && !stdout) {
           reject(new Error((stderr || error.message).trim()));
           return;
         }
@@ -932,7 +934,7 @@ export async function handleContext(ctx: Context): Promise<void> {
   const cached = getCachedUsage(chatId);
   if (cached) {
     const pct = cached.contextWindow > 0
-      ? Math.round(((cached.inputTokens + cached.outputTokens) / cached.contextWindow) * 100)
+      ? Math.round(((cached.inputTokens + cached.outputTokens + cached.cacheReadTokens) / cached.contextWindow) * 100)
       : 0;
     const bar = getProgressBar(pct);
 
@@ -1781,9 +1783,10 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
             `📎 Reddit JSON saved: ${path.basename(outputPath)}`
           );
 
+          const displayPath = `.claudegram/reddit/${path.basename(outputPath)}`;
           const notice = sent
             ? `Large thread detected \\(${output.length} chars\\) — sent JSON file for structured review\\.`
-            : `Large thread detected \\(${output.length} chars\\) — JSON saved at \`${esc(outputPath)}\`\\.`;
+            : `Large thread detected \\(${output.length} chars\\) — JSON saved at \`${esc(displayPath)}\`\\.`;
 
           await replyMd(ctx, notice);
         } catch (jsonError) {
@@ -1795,7 +1798,7 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
       }
 
       if (hadOutputFlag) {
-        await replyMd(ctx, 'ℹ️ Note: `-o/--output` is ignored in chat mode\\. I can save JSON automatically for large threads\\.');
+        await replyMd(ctx, 'ℹ️ Note: `-o/--output` is ignored in this picker flow\\. JSON is saved automatically for large threads\\.');
       }
     }
 
