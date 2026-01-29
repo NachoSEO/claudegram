@@ -75,13 +75,29 @@ async function sendCompactionNotification(
 ): Promise<void> {
   if (!config.CONTEXT_NOTIFY_COMPACTION || !compaction) return;
   const c = compaction;
+  console.log(`[Compaction] Sending notification: trigger=${c.trigger}, preTokens=${c.preTokens}`);
   const emoji = c.trigger === 'auto' ? '⚠️' : 'ℹ️';
-  const triggerLabel = c.trigger === 'auto' ? 'Auto\\-compacted' : 'Manually compacted';
-  const msg = `${emoji} *Context Compacted*\n\n`
-    + `${triggerLabel} — previous context was ${esc(fmtTokens(c.preTokens))} tokens\\.\n`
-    + `The agent now has a summarized version of your conversation\\.\n\n`
-    + `_Tip: Use /handoff before compaction to save a detailed context document\\._`;
-  await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+  const triggerLabel = c.trigger === 'auto' ? 'Auto-compacted' : 'Manually compacted';
+  try {
+    const msg = `${emoji} *Context Compacted*\n\n`
+      + `${esc(triggerLabel)} — previous context was ${esc(fmtTokens(c.preTokens))} tokens\\.\n`
+      + `The agent now has a summarized version of your conversation\\.\n\n`
+      + `_Tip: Use /handoff before compaction to save a detailed context document\\._`;
+    await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+  } catch (err) {
+    console.error('[Compaction] Failed to send notification:', err);
+    // Fallback to plain text if MarkdownV2 fails
+    try {
+      await ctx.reply(
+        `${emoji} Context Compacted\n\n`
+        + `${triggerLabel} — previous context was ${fmtTokens(c.preTokens)} tokens.\n`
+        + `The agent now has a summarized version of your conversation.`,
+        { parse_mode: undefined }
+      );
+    } catch (fallbackErr) {
+      console.error('[Compaction] Fallback notification also failed:', fallbackErr);
+    }
+  }
 }
 
 async function sendSessionInitNotification(
