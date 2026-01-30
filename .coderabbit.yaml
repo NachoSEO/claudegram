@@ -124,7 +124,14 @@ reviews:
       enabled: false
     circleci:
       enabled: false
-    # Keep enabled: biome, eslint, oxc (JS/TS), shellcheck, markdownlint,
+    # JS/TS linting: eslint only. Biome and oxc overlap with eslint and the
+    # project has no biome.json or oxc config, so they'd run defaults that
+    # duplicate eslint findings. Keep one primary linter to avoid noise.
+    biome:
+      enabled: false
+    oxc:
+      enabled: false
+    # Keep enabled: eslint (JS/TS), shellcheck, markdownlint,
     # gitleaks, htmlhint, yamllint, hadolint, semgrep, actionlint
 
 chat:
