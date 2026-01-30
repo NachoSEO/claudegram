@@ -573,11 +573,21 @@ async function redditFetchRaw(
     timeFilter,
   } = options;
 
+  // Global timeout for the entire fetch operation (all targets combined)
+  const globalTimeout = config.REDDITFETCH_TIMEOUT_MS || 30_000;
+  const deadline = Date.now() + globalTimeout;
+
   const headers = await getAuthHeaders();
   const userAgent = headers['User-Agent'];
   const results: RawResult[] = [];
 
   for (const raw of targets) {
+    // Check global deadline before each target
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(`Reddit fetch timed out after ${globalTimeout}ms`);
+    }
+
     let parsed = parseRedditUrl(raw);
 
     if (!parsed) {
