@@ -1,0 +1,43 @@
+# CodeRabbit configuration for Claudegram
+# See: https://docs.coderabbit.ai/reference/configuration
+
+language: "en-US"
+tone_instructions: "Be direct and technical. Focus on security, correctness, and real bugs over style nitpicks. Skip praise — just flag issues."
+
+reviews:
+  profile: "assertive"
+
+  # Exclude local-only files and generated output from review
+  path_filters:
+    - "!CLAUDE.md"
+    - "!AGENTS.md"
+    - "!CLAUDE_AGENT_SDK_MIGRATION_MASTER_PLAN.md"
+    - "!MEDIUM_*.md"
+    - "!scripts/medium_*.py"
+    - "!dist/**"
+    - "!node_modules/**"
+    - "!package-lock.json"
+
+  # Path-specific review instructions
+  path_instructions:
+    - path: "src/bot/handlers/**"
+      instructions: |
+        Focus on: error sanitization (use sanitizeError() for user-facing messages),
+        proper cleanup of temp files on all error paths, and race condition prevention
+        (pending results keyed by messageId, not chatId).
+    - path: "src/utils/**"
+      instructions: |
+        These are security-critical utilities. Check for: SSRF protection in URL handling,
+        path traversal prevention, proper file descriptor cleanup, and no token/secret leakage.
+    - path: "src/media/**"
+      instructions: |
+        Check for: SSRF protection on user-provided URLs, proper error sanitization,
+        and safe handling of external tool invocations (yt-dlp). No tokens in CLI args.
+    - path: "src/telegram/**"
+      instructions: |
+        Focus on: Telegram API limits (4096 char messages, rate limiting on edits),
+        proper MarkdownV2 escaping, and .unref() on any intervals/timers.
+    - path: "docs/**"
+      instructions: |
+        Check for: accessibility (ARIA attributes), security (rel="noopener noreferrer"
+        on external links), and no hardcoded personal paths or credentials.
