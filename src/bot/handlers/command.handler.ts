@@ -1057,8 +1057,27 @@ export async function handleRestartBot(ctx: Context): Promise<void> {
 
   await replyMd(
     ctx,
-    '🔁 Restarting bot\\.\n\n⏳ Please wait at least *10\\-15 seconds* before checking status or resuming\\.\n\nThen use `/continue` or `/resume` to restore your session\\.'
+    '🔁 Restarting bot\\.\n\n⏳ Please wait at least *10\\-15 seconds* before checking status or resuming\\.'
   );
+
+  // Send restore buttons immediately — the process gets killed too fast for a delayed send
+  const chatId = ctx.chat?.id;
+  if (chatId) {
+    try {
+      await ctx.api.sendMessage(chatId, '👇 Restore your session after restart:', {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '▶️ Continue', callback_data: 'restart:continue' },
+              { text: '📜 Resume', callback_data: 'restart:resume' },
+            ],
+          ],
+        },
+      });
+    } catch (e) {
+      console.debug('[RestartBot] Failed to send restore buttons:', e instanceof Error ? e.message : e);
+    }
+  }
 
   try {
     const child = spawn(
@@ -1069,6 +1088,21 @@ export async function handleRestartBot(ctx: Context): Promise<void> {
     child.unref();
   } catch (error) {
     console.error('[BotCtl] Failed to restart:', sanitizeError(error));
+  }
+}
+
+export async function handleRestartCallback(ctx: Context): Promise<void> {
+  const data = ctx.callbackQuery?.data;
+  if (!data) return;
+
+  if (data === 'restart:continue') {
+    await ctx.answerCallbackQuery();
+    await handleContinue(ctx);
+  } else if (data === 'restart:resume') {
+    await ctx.answerCallbackQuery();
+    await handleResume(ctx);
+  } else {
+    await ctx.answerCallbackQuery();
   }
 }
 

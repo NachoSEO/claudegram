@@ -98,7 +98,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
 
     console.log(`[Voice] Downloaded ${fileSizeMB.toFixed(1)}MB to ${tempFilePath}`);
 
-    // Transcribe using groq_transcribe.py
+    // Transcribe using Groq Whisper API (native TypeScript)
     const transcript = await transcribeFile(tempFilePath);
 
     console.log(`[Voice] Transcript (${transcript.length} chars): ${transcript.substring(0, 100)}...`);
