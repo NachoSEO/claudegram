@@ -209,7 +209,7 @@ export class MessageSender {
 
       state.spinnerIndex = (state.spinnerIndex + 1) % 10;
       // Trigger a display update if we have a current operation
-      if (state.currentOperation) {
+      if (state.currentOperation || state.backgroundTasks.length > 0) {
         this.flushTerminalUpdate(ctx, state).catch(() => {});
       }
     }, SPINNER_INTERVAL_MS);

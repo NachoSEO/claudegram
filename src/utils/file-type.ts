@@ -105,6 +105,17 @@ export function detectImageType(buffer: Buffer): FileTypeResult | null {
   return null;
 }
 
+function readHeaderBytes(filePath: string, length = 16): { buffer: Buffer; bytesRead: number } {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const bytesRead = fs.readSync(fd, buffer, 0, length, 0);
+    return { buffer, bytesRead };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /**
  * Validate that a file is actually an image by checking magic bytes.
  * @param filePath Path to the file to validate
@@ -112,11 +123,7 @@ export function detectImageType(buffer: Buffer): FileTypeResult | null {
  */
 export function isValidImageFile(filePath: string): boolean {
   try {
-    // Read first 16 bytes (enough for any signature)
-    const fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(16);
-    const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
-    fs.closeSync(fd);
+    const { buffer, bytesRead } = readHeaderBytes(filePath);
 
     if (bytesRead < 2) return false;
 
@@ -133,10 +140,7 @@ export function isValidImageFile(filePath: string): boolean {
  */
 export function getFileType(filePath: string): FileTypeResult | null {
   try {
-    const fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(16);
-    const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
-    fs.closeSync(fd);
+    const { buffer, bytesRead } = readHeaderBytes(filePath);
 
     if (bytesRead < 2) return null;
 

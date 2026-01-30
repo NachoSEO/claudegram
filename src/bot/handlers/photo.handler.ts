@@ -169,7 +169,8 @@ export async function handlePhoto(ctx: Context): Promise<void> {
 
     // Get actual file type from magic bytes instead of trusting extension
     const actualType = getFileType(destPath);
-    const ext = actualType?.extension || path.extname(filePath) || '.jpg';
+    const rawExt = actualType?.extension || path.extname(filePath) || '.jpg';
+    const ext = rawExt.startsWith('.') ? rawExt : `.${rawExt}`;
     const finalPath = ext && ext !== '.jpg'
       ? destPath.replace(/\.jpg$/, ext)
       : destPath;
@@ -185,8 +186,8 @@ export async function handlePhoto(ctx: Context): Promise<void> {
 
     await handleSavedImage(ctx, finalPath, ctx.message?.caption);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Photo] Error:', sanitizeError(error));
+    const errorMessage = sanitizeError(error);
+    console.error('[Photo] Error:', errorMessage);
     await ctx.reply(`❌ Image error: ${esc(errorMessage)}`, { parse_mode: 'MarkdownV2' });
   }
 }
@@ -258,8 +259,8 @@ export async function handleImageDocument(ctx: Context): Promise<void> {
 
     await handleSavedImage(ctx, destPath, ctx.message?.caption);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[ImageDoc] Error:', sanitizeError(error));
+    const errorMessage = sanitizeError(error);
+    console.error('[ImageDoc] Error:', errorMessage);
     await ctx.reply(`❌ Image error: ${esc(errorMessage)}`, { parse_mode: 'MarkdownV2' });
   }
 }

@@ -68,17 +68,33 @@ export function detectPlatform(url: string): Platform {
 }
 
 /**
+ * Check if a hostname resolves to a private/internal IP range.
+ */
+function isPrivateHost(hostname: string): boolean {
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
+  const parts = hostname.split('.').map(Number);
+  if (parts.length === 4 && parts.every(n => !isNaN(n))) {
+    const [a, b] = parts;
+    if (a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 127) return true;
+    if (a === 0) return true;
+  }
+  return hostname.endsWith('.local') || hostname.endsWith('.internal');
+}
+
+/**
  * Validate a URL for safe external fetching.
- * Only allows http/https protocols to prevent SSRF attacks.
+ * Only allows http/https protocols and blocks private/internal hosts to prevent SSRF attacks.
  */
 export function isValidUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    // Only allow http/https to prevent SSRF attacks (file://, ftp://, etc.)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    if (isPrivateHost(parsed.hostname)) return false;
+    return true;
+  } catch { return false; }
 }
 
 function platformEmoji(platform: Platform): string {
@@ -531,8 +547,8 @@ export async function extractMedia(opts: ExtractOptions): Promise<ExtractResult>
 
     return result;
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[extract] Error:', sanitizeError(error));
+    const msg = sanitizeError(error);
+    console.error('[extract] Error:', msg);
     throw new Error(msg);
   } finally {
     result._tempDir = tempDir;

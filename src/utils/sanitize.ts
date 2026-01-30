@@ -1,7 +1,8 @@
 import * as os from 'os';
 
 const HOME_DIR = os.homedir();
-const USERNAME = os.userInfo().username;
+let USERNAME = '';
+try { USERNAME = os.userInfo().username; } catch { USERNAME = ''; }
 
 /**
  * Sanitize a string by replacing sensitive paths and usernames.

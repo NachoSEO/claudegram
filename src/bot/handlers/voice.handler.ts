@@ -80,7 +80,10 @@ export async function handleVoice(ctx: Context): Promise<void> {
   try {
     // Download voice file from Telegram (with retry for transient network errors)
     const file = await ctx.api.getFile(voice.file_id);
-    const fileUrl = getTelegramFileUrl(config.TELEGRAM_BOT_TOKEN, file.file_path!);
+    if (!file.file_path) {
+      throw new Error('Telegram did not provide a file path.');
+    }
+    const fileUrl = getTelegramFileUrl(config.TELEGRAM_BOT_TOKEN, file.file_path);
 
     // Download using curl with secure stdin config (prevents token exposure in ps)
     const ext = voice.mime_type?.includes('ogg') ? '.ogg' : '.oga';
@@ -213,7 +216,10 @@ async function handleTranscribeOnly(
 
   try {
     const file = await ctx.api.getFile(voice.file_id);
-    const fileUrl = getTelegramFileUrl(config.TELEGRAM_BOT_TOKEN, file.file_path!);
+    if (!file.file_path) {
+      throw new Error('Telegram did not provide a file path.');
+    }
+    const fileUrl = getTelegramFileUrl(config.TELEGRAM_BOT_TOKEN, file.file_path);
 
     const ext = voice.mime_type?.includes('ogg') ? '.ogg' : '.oga';
     tempFilePath = path.join(os.tmpdir(), `claudegram_transcribe_${messageId}${ext}`);
