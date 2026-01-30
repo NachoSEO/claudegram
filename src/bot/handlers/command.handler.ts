@@ -1101,6 +1101,8 @@ export async function handleRestartCallback(ctx: Context): Promise<void> {
   } else if (data === 'restart:resume') {
     await ctx.answerCallbackQuery();
     await handleResume(ctx);
+  } else {
+    await ctx.answerCallbackQuery();
   }
 }
 

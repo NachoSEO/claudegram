@@ -8,16 +8,30 @@ const MAX_MESSAGE_LENGTH = 4096;
  */
 export function convertToTelegramMarkdown(text: string): string {
   try {
-    // Pre-process: convert thematic breaks (---, ***, ___) to a unicode separator.
-    // The telegram-markdown-v2 library doesn't handle these and leaves *** intact,
-    // which Telegram then misinterprets as an unterminated bold/italic entity.
-    const preprocessed = text.replace(/^[ \t]*([\*\-_]){3,}[ \t]*$/gm, '———');
+    // Pre-process: convert thematic breaks (---, ***, ___) to a unicode separator,
+    // but only outside fenced code blocks. The telegram-markdown-v2 library doesn't
+    // handle these and leaves *** intact, which Telegram then misinterprets as an
+    // unterminated bold/italic entity.
+    const preprocessed = replaceThematicBreaksOutsideCode(text);
     return convert(preprocessed, 'escape');
   } catch (error) {
     console.error('Markdown conversion error:', error);
     // Fallback: escape special characters manually
     return escapeMarkdownV2(text);
   }
+}
+
+/**
+ * Replace thematic breaks (***, ---, ___) only outside fenced code blocks.
+ * Splits on ``` boundaries and only applies the replacement to non-code segments.
+ */
+function replaceThematicBreaksOutsideCode(text: string): string {
+  const parts = text.split(/(```[\s\S]*?```)/g);
+  return parts.map((segment, i) => {
+    // Odd indices are the fenced code blocks captured by the regex
+    if (i % 2 === 1) return segment;
+    return segment.replace(/^[ \t]*([\*\-_]){3,}[ \t]*$/gm, '———');
+  }).join('');
 }
 
 /**

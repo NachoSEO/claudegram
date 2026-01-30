@@ -1,6 +1,6 @@
 import { Context, Api, InputFile } from 'grammy';
 import { config } from '../config.js';
-import { processMessageForTelegram, convertToTelegramMarkdown, escapeMarkdownV2 } from './markdown.js';
+import { processMessageForTelegram, convertToTelegramMarkdown, escapeMarkdownV2, splitMessage } from './markdown.js';
 import { shouldUseTelegraph, createTelegraphPage, createTelegraphFromFile } from './telegraph.js';
 import { isTerminalUIEnabled } from './terminal-settings.js';
 import {
@@ -70,9 +70,12 @@ export class MessageSender {
       try {
         await ctx.reply(part, { parse_mode: 'MarkdownV2' });
       } catch (error) {
-        // MarkdownV2 failed — send as plain text immediately (no point retrying broken markup)
+        // MarkdownV2 failed — send as plain text chunks (raw text may exceed 4096 chars)
         console.error('MarkdownV2 send failed, falling back to plain text:', error);
-        await ctx.reply(text, { parse_mode: undefined });
+        const plainChunks = splitMessage(text);
+        for (const chunk of plainChunks) {
+          await ctx.reply(chunk, { parse_mode: undefined });
+        }
         // Already sent full text as plain — skip remaining MarkdownV2 parts
         return;
       }
