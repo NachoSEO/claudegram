@@ -1,6 +1,6 @@
 import { Context, Api, InputFile } from 'grammy';
 import { config } from '../config.js';
-import { processMessageForTelegram, convertToTelegramMarkdown, escapeMarkdownV2 } from './markdown.js';
+import { processMessageForTelegram, convertToTelegramMarkdown, escapeMarkdownV2, splitMessage } from './markdown.js';
 import { shouldUseTelegraph, createTelegraphPage, createTelegraphFromFile } from './telegraph.js';
 import { isTerminalUIEnabled } from './terminal-settings.js';
 import {
@@ -34,7 +34,7 @@ interface StreamState {
 }
 
 const TYPING_INTERVAL_MS = 4000; // Send typing every 4 seconds
-const SPINNER_INTERVAL_MS = 150; // Spinner animation speed
+const SPINNER_INTERVAL_MS = 2000; // Spinner animation speed (Telegram rate-limits edits to ~1/sec)
 
 export class MessageSender {
   private streamStates: Map<number, StreamState> = new Map();
@@ -70,15 +70,14 @@ export class MessageSender {
       try {
         await ctx.reply(part, { parse_mode: 'MarkdownV2' });
       } catch (error) {
-        // If MarkdownV2 fails, try with escaped plain text
-        console.error('MarkdownV2 send failed, trying escaped fallback:', error);
-        try {
-          await ctx.reply(escapeMarkdownV2(text), { parse_mode: 'MarkdownV2' });
-        } catch (fallbackError) {
-          // Last resort: send as plain text
-          console.error('Fallback also failed, sending plain text:', fallbackError);
-          await ctx.reply(text, { parse_mode: undefined });
+        // MarkdownV2 failed — send as plain text chunks (raw text may exceed 4096 chars)
+        console.error('MarkdownV2 send failed, falling back to plain text:', error);
+        const plainChunks = splitMessage(text);
+        for (const chunk of plainChunks) {
+          await ctx.reply(chunk, { parse_mode: undefined });
         }
+        // Already sent full text as plain — skip remaining MarkdownV2 parts
+        return;
       }
     }
   }
@@ -207,9 +206,9 @@ export class MessageSender {
         return;
       }
 
-      state.spinnerIndex = (state.spinnerIndex + 1) % 10;
+      state.spinnerIndex = state.spinnerIndex + 1;
       // Trigger a display update if we have a current operation
-      if (state.currentOperation) {
+      if (state.currentOperation || state.backgroundTasks.length > 0) {
         this.flushTerminalUpdate(ctx, state).catch(() => {});
       }
     }, SPINNER_INTERVAL_MS);
@@ -294,17 +293,21 @@ export class MessageSender {
 
     // Add content (truncated)
     if (state.content) {
-      const maxContentLen = config.MAX_MESSAGE_LENGTH - 200; // Reserve space for status
+      const TERMINAL_STATUS_RESERVE_CHARS = 200;
+      const maxContentLen = config.MAX_MESSAGE_LENGTH - TERMINAL_STATUS_RESERVE_CHARS;
       const truncatedContent = state.content.length > maxContentLen
         ? state.content.substring(0, maxContentLen) + '...'
         : state.content;
       parts.push(truncatedContent);
     }
 
-    // Add background tasks
-    if (state.backgroundTasks.length > 0) {
+    // Add background tasks (cap display to prevent exceeding Telegram's 4096-char limit)
+    const activeTasks = state.backgroundTasks.filter(t => t.status !== 'complete' && t.status !== 'error');
+    const finishedTasks = state.backgroundTasks.filter(t => t.status === 'complete' || t.status === 'error');
+    const displayTasks = [...activeTasks, ...finishedTasks.slice(-3)].slice(0, 8);
+    if (displayTasks.length > 0) {
       if (state.content || state.currentOperation) parts.push('');
-      for (const task of state.backgroundTasks) {
+      for (const task of displayTasks) {
         const statusIcon = task.status === 'complete' ? TOOL_ICONS.complete
           : task.status === 'error' ? TOOL_ICONS.error
           : getSpinnerFrame(state.spinnerIndex);
@@ -476,16 +479,22 @@ export class MessageSender {
               await new Promise(resolve => setTimeout(resolve, 100));
             }
           } catch (mdError) {
-            // MarkdownV2 failed — delete streaming placeholder and
-            // re-send via sendMessage which handles Telegraph + chunking
-            console.error('MarkdownV2 edit failed, falling back to sendMessage:', mdError);
-            try {
-              await ctx.api.deleteMessage(chatId, state.messageId);
-            } catch { /* ignore */ }
+            // "message is not modified" means the content already matches — treat as success
+            const errMsg = mdError instanceof Error ? mdError.message : '';
+            if (errMsg.includes('message is not modified')) {
+              console.debug('[Stream] Edit skipped — content unchanged');
+            } else {
+              // MarkdownV2 failed — delete streaming placeholder and
+              // re-send via sendMessage which handles Telegraph + chunking
+              console.error('MarkdownV2 edit failed, falling back to sendMessage:', mdError);
+              try {
+                await ctx.api.deleteMessage(chatId, state.messageId);
+              } catch { /* ignore */ }
 
-            this.streamStates.delete(chatId);
-            await this.sendMessage(ctx, finalContent);
-            return;
+              this.streamStates.delete(chatId);
+              await this.sendMessage(ctx, finalContent);
+              return;
+            }
           }
         } catch (error) {
           console.error('Error finishing stream:', error);

@@ -57,8 +57,8 @@ export async function transcribeFile(filePath: string, options?: TranscribeOptio
 }
 
 /**
- * Download a file from Telegram servers using curl (with retry).
- * Uses stdin config to avoid exposing bot token in process args.
+ * Download a file from Telegram servers securely.
+ * Constructs the URL via getTelegramFileUrl and delegates to downloadFileSecure.
  */
 export function downloadTelegramAudio(botToken: string, filePath: string, destPath: string): Promise<void> {
   const fileUrl = getTelegramFileUrl(botToken, filePath);

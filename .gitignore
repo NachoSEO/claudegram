@@ -4,7 +4,18 @@ dist/
 *.log
 .DS_Store
 .telegraph-account.json
+.claude/
 .claudegram/
 __pycache__/
 storage_state.json
 output/
+
+# Local-only dev docs (not for public repos)
+CLAUDE.md
+AGENTS.md
+CLAUDE_AGENT_SDK_MIGRATION_MASTER_PLAN.md
+MEDIUM_*.md
+
+# Local Python scripts (Medium scraper tooling)
+scripts/medium_fetch.py
+scripts/medium_login.py

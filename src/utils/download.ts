@@ -14,9 +14,10 @@ export function downloadFileSecure(fileUrl: string, destPath: string): Promise<v
       '--max-time',
       '30',
       '--retry',
-      '2',
+      '3',
       '--retry-delay',
       '2',
+      '--retry-all-errors',
       '-o',
       destPath,
       '-K',
@@ -25,6 +26,10 @@ export function downloadFileSecure(fileUrl: string, destPath: string): Promise<v
 
     const child = spawn('curl', curlArgs, { timeout: 60_000 });
     let stderr = '';
+
+    child.stdin.on('error', (err) => {
+      reject(new Error(`Failed to write to curl stdin: ${err.message}`));
+    });
 
     child.stderr.on('data', (data) => {
       stderr += data.toString();
@@ -43,8 +48,10 @@ export function downloadFileSecure(fileUrl: string, destPath: string): Promise<v
       }
     });
 
-    // Write URL via stdin config format to avoid process arg exposure
-    child.stdin.write(`url = "${fileUrl}"\n`);
+    // Write URL via stdin config format to avoid process arg exposure.
+    // Sanitize the URL to prevent curl config injection via embedded quotes/newlines.
+    const safeUrl = fileUrl.replace(/[\r\n"\\]/g, '');
+    child.stdin.write(`url = "${safeUrl}"\n`);
     child.stdin.end();
   });
 }

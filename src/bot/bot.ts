@@ -15,6 +15,7 @@ import {
   handleTTSCallback,
   handleBotStatus,
   handleRestartBot,
+  handleRestartCallback,
   handleContext,
   handlePing,
   handleCancel,
@@ -42,6 +43,7 @@ import {
   handleTranscribeDocument,
   handleExtract,
   handleExtractCallback,
+  handleRedditActionCallback,
 } from './handlers/command.handler.js';
 import { handleMessage } from './handlers/message.handler.js';
 import { handleVoice } from './handlers/voice.handler.js';
@@ -156,6 +158,10 @@ export async function createBot(): Promise<Bot> {
       await handleMediumCallback(ctx);
     } else if (data.startsWith('extract:')) {
       await handleExtractCallback(ctx);
+    } else if (data.startsWith('reddit_action:')) {
+      await handleRedditActionCallback(ctx);
+    } else if (data.startsWith('restart:')) {
+      await handleRestartCallback(ctx);
     }
   });
 

@@ -12,16 +12,15 @@ const IMAGE_SIGNATURES: { bytes: number[]; extension: string; mimeType: string }
   { bytes: [0x47, 0x49, 0x46, 0x38, 0x37, 0x61], extension: '.gif', mimeType: 'image/gif' },
   // GIF89a
   { bytes: [0x47, 0x49, 0x46, 0x38, 0x39, 0x61], extension: '.gif', mimeType: 'image/gif' },
-  // WebP (RIFF....WEBP)
-  { bytes: [0x52, 0x49, 0x46, 0x46], extension: '.webp', mimeType: 'image/webp' },
-  // BMP
-  { bytes: [0x42, 0x4D], extension: '.bmp', mimeType: 'image/bmp' },
+  // NOTE: BMP is handled by dedicated isBMP() check, not in this array.
   // TIFF (little endian)
   { bytes: [0x49, 0x49, 0x2A, 0x00], extension: '.tiff', mimeType: 'image/tiff' },
   // TIFF (big endian)
   { bytes: [0x4D, 0x4D, 0x00, 0x2A], extension: '.tiff', mimeType: 'image/tiff' },
-  // HEIC/HEIF (ftyp)
-  { bytes: [0x00, 0x00, 0x00], extension: '.heic', mimeType: 'image/heic' }, // Partial match, needs ftyp check
+  // NOTE: WebP is handled by dedicated isWebP() check, not in this array.
+  // NOTE: HEIC/HEIF removed — the old [0x00,0x00,0x00] signature was a false-positive
+  // magnet (matches any file starting with null bytes). Proper HEIC detection requires
+  // checking for "ftyp" at offset 4 and brand codes at offset 8.
 ];
 
 export interface FileTypeResult {
@@ -52,24 +51,72 @@ function isWebP(buffer: Buffer): boolean {
 }
 
 /**
+ * Detect HEIF container brand from ISO BMFF ftyp box.
+ * Returns 'heic' for HEVC-based brands, 'heif' for generic HEIF brands, or null.
+ */
+function getHeifBrand(buffer: Buffer): 'heic' | 'heif' | null {
+  if (buffer.length < 12) return null;
+  if (buffer[4] !== 0x66 || buffer[5] !== 0x74 || buffer[6] !== 0x79 || buffer[7] !== 0x70) return null;
+  const brand = buffer.slice(8, 12).toString('ascii');
+  if (['heic', 'heix', 'hevc', 'hevx'].includes(brand)) return 'heic';
+  if (['mif1', 'msf1', 'heif'].includes(brand)) return 'heif';
+  return null;
+}
+
+/**
+ * Additional BMP validation: reserved bytes at offset 6-9 should be zero.
+ */
+function isBMP(buffer: Buffer): boolean {
+  if (buffer.length < 10) return false;
+  if (buffer[0] !== 0x42 || buffer[1] !== 0x4D) return false;
+  // Reserved fields at bytes 6-9 must be zero in valid BMP files
+  return buffer[6] === 0 && buffer[7] === 0 && buffer[8] === 0 && buffer[9] === 0;
+}
+
+/**
  * Detect file type from magic bytes.
  * Returns null if the file type is not recognized as an image.
  */
 export function detectImageType(buffer: Buffer): FileTypeResult | null {
-  // Check WebP first (special case)
+  // Check WebP first (special case — shares RIFF header with WAV/AVI)
   if (isWebP(buffer)) {
     return { extension: '.webp', mimeType: 'image/webp' };
   }
 
+  // Check HEIC/HEIF (proper ftyp box validation)
+  const heifBrand = getHeifBrand(buffer);
+  if (heifBrand === 'heic') {
+    return { extension: '.heic', mimeType: 'image/heic' };
+  }
+  if (heifBrand === 'heif') {
+    return { extension: '.heif', mimeType: 'image/heif' };
+  }
+
+  // Check BMP with reserved-byte validation (avoids 2-byte false positives)
+  if (isBMP(buffer)) {
+    return { extension: '.bmp', mimeType: 'image/bmp' };
+  }
+
   // Check other signatures
   for (const sig of IMAGE_SIGNATURES) {
-    if (sig.extension === '.webp') continue; // Already checked
+    if (sig.extension === '.bmp') continue; // Already checked above
     if (matchesSignature(buffer, sig.bytes)) {
       return { extension: sig.extension, mimeType: sig.mimeType };
     }
   }
 
   return null;
+}
+
+function readHeaderBytes(filePath: string, length = 16): { buffer: Buffer; bytesRead: number } {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const bytesRead = fs.readSync(fd, buffer, 0, length, 0);
+    return { buffer: buffer.subarray(0, bytesRead), bytesRead };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /**
@@ -79,11 +126,7 @@ export function detectImageType(buffer: Buffer): FileTypeResult | null {
  */
 export function isValidImageFile(filePath: string): boolean {
   try {
-    // Read first 16 bytes (enough for any signature)
-    const fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(16);
-    const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
-    fs.closeSync(fd);
+    const { buffer, bytesRead } = readHeaderBytes(filePath);
 
     if (bytesRead < 2) return false;
 
@@ -100,10 +143,7 @@ export function isValidImageFile(filePath: string): boolean {
  */
 export function getFileType(filePath: string): FileTypeResult | null {
   try {
-    const fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(16);
-    const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
-    fs.closeSync(fd);
+    const { buffer, bytesRead } = readHeaderBytes(filePath);
 
     if (bytesRead < 2) return null;
 
