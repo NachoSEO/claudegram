@@ -111,25 +111,6 @@ function botctlExists(): boolean {
   return fs.existsSync(BOTCTL_PATH);
 }
 
-function runBotCtl(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      BOTCTL_PATH,
-      args,
-      { cwd: PROJECT_ROOT, env: { ...process.env, MODE: config.BOT_MODE } },
-      (error, stdout, stderr) => {
-        // Resolve with stdout even on non-zero exit codes (e.g. "status"
-        // returns exit 1 when the bot isn't running, which is valid output)
-        if (error && !stdout) {
-          reject(new Error((stderr || error.message).trim()));
-          return;
-        }
-        resolve({ stdout: stdout || '', stderr: stderr || '' });
-      }
-    );
-  });
-}
-
 type TTSMenuMode = 'main' | 'voices';
 
 function parseContextOutput(raw: string): string {
@@ -1584,8 +1565,7 @@ function parseRedditArgs(tokens: string[]): {
       if (next === 'json' || next === 'markdown') {
         format = next;
       }
-      cleanTokens.push(token, tokens[i + 1]);
-      i++;
+      i++; // skip value, don't push to cleanTokens (handled here)
       continue;
     }
 
@@ -1628,15 +1608,16 @@ function ensureMediumOutputDir(ctx: Context, url: string): string {
 }
 
 
-// Pending Reddit fetch results keyed by chatId, with 5-min TTL
+// Pending Reddit fetch results keyed by messageId, with 5-min TTL.
+// Keyed by messageId (not chatId) so concurrent fetches don't overwrite each other.
 const pendingRedditResults = new Map<number, {
+  chatId: number;
   output: string;
   jsonOutput: string;
   targets: string[];
   options: RedditFetchOptions;
   format: RedditFormat | null;
   hadOutputFlag: boolean;
-  messageId: number;
   expiresAt: number;
 }>();
 const REDDIT_RESULT_TTL_MS = 5 * 60 * 1000;
@@ -1678,9 +1659,6 @@ export async function executeRedditFetch(
       if (!Number.isNaN(parsed) && parsed > 0) options.depth = parsed;
     } else if (token === '--time' && cleanTokens[i + 1]) {
       options.timeFilter = cleanTokens[++i];
-    } else if (token === '-f' || token === '--format') {
-      // Already captured by parseRedditArgs, skip value
-      i++;
     } else {
       targets.push(token);
     }
@@ -1730,15 +1708,15 @@ export async function executeRedditFetch(
       },
     });
 
-    // Cache both formats for callback handling
-    pendingRedditResults.set(chatId, {
+    // Cache both formats for callback handling (keyed by messageId)
+    pendingRedditResults.set(msg.message_id, {
+      chatId,
       output,
       jsonOutput,
       targets,
       options,
       format,
       hadOutputFlag,
-      messageId: msg.message_id,
       expiresAt: Date.now() + REDDIT_RESULT_TTL_MS,
     });
   } catch (err: unknown) {
@@ -1769,11 +1747,12 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
 
   const action = data.replace('reddit_action:', '');
 
-  // Look up pending result and validate message_id to avoid cross-result mixups
-  const pending = pendingRedditResults.get(chatId);
+  // Look up pending result by messageId (keyed by picker message ID)
   const callbackMsgId = ctx.callbackQuery?.message?.message_id;
-  if (!pending || callbackMsgId !== pending.messageId || Date.now() > pending.expiresAt) {
-    pendingRedditResults.delete(chatId);
+  if (!callbackMsgId) return;
+  const pending = pendingRedditResults.get(callbackMsgId);
+  if (!pending || Date.now() > pending.expiresAt) {
+    if (callbackMsgId) pendingRedditResults.delete(callbackMsgId);
     await ctx.answerCallbackQuery({ text: 'Result expired. Please fetch again.' });
     return;
   }
@@ -1897,11 +1876,11 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
     } catch { /* ignore edit failure */ }
 
     // Clean up
-    pendingRedditResults.delete(chatId);
+    pendingRedditResults.delete(callbackMsgId);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     await replyMd(ctx, `❌ Action failed: ${esc(message.substring(0, 300))}`);
-    pendingRedditResults.delete(chatId);
+    pendingRedditResults.delete(callbackMsgId);
   }
 }
 
@@ -1909,16 +1888,18 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
 const pendingMediumResults = new Map<number, { article: FreediumArticle; messageId: number; expiresAt: number }>();
 const MEDIUM_RESULT_TTL_MS = 5 * 60 * 1000;
 
-// Periodic cleanup of expired pending results to prevent memory leaks
-setInterval(() => {
+// Periodic cleanup of expired pending results to prevent memory leaks.
+// .unref() so this timer doesn't prevent graceful process shutdown.
+const _cleanupInterval = setInterval(() => {
   const now = Date.now();
-  for (const [chatId, entry] of pendingRedditResults) {
-    if (now > entry.expiresAt) pendingRedditResults.delete(chatId);
+  for (const [msgId, entry] of pendingRedditResults) {
+    if (now > entry.expiresAt) pendingRedditResults.delete(msgId);
   }
   for (const [chatId, entry] of pendingMediumResults) {
     if (now > entry.expiresAt) pendingMediumResults.delete(chatId);
   }
 }, REDDIT_RESULT_TTL_MS);
+_cleanupInterval.unref();
 
 /**
  * Fetch a Medium article via Freedium and present inline action buttons.

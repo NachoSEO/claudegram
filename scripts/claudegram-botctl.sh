@@ -25,7 +25,6 @@ DEV_PATTERNS=(
 )
 
 PROD_PATTERNS=(
-  "node dist/index.js"
   "node .*dist/index.js"
   "npm start"
 )
