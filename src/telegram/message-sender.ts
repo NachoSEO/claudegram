@@ -34,7 +34,7 @@ interface StreamState {
 }
 
 const TYPING_INTERVAL_MS = 4000; // Send typing every 4 seconds
-const SPINNER_INTERVAL_MS = 150; // Spinner animation speed
+const SPINNER_INTERVAL_MS = 2000; // Spinner animation speed (Telegram rate-limits edits to ~1/sec)
 
 export class MessageSender {
   private streamStates: Map<number, StreamState> = new Map();

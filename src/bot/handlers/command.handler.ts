@@ -2494,6 +2494,7 @@ export async function handleExtractCallback(ctx: Context): Promise<void> {
       return;
     }
     pendingExtractUrls.delete(chatId);
+    pendingExtractTimestamps.delete(chatId);
 
     // Remove the subtitle format menu
     try {
@@ -2566,6 +2567,7 @@ export async function handleExtractCallback(ctx: Context): Promise<void> {
   }
 
   pendingExtractUrls.delete(chatId);
+  pendingExtractTimestamps.delete(chatId);
 
   // Remove the menu message
   try {

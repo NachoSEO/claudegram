@@ -43,8 +43,10 @@ export function downloadFileSecure(fileUrl: string, destPath: string): Promise<v
       }
     });
 
-    // Write URL via stdin config format to avoid process arg exposure
-    child.stdin.write(`url = "${fileUrl}"\n`);
+    // Write URL via stdin config format to avoid process arg exposure.
+    // Sanitize the URL to prevent curl config injection via embedded quotes/newlines.
+    const safeUrl = fileUrl.replace(/[\r\n"\\]/g, '');
+    child.stdin.write(`url = "${safeUrl}"\n`);
     child.stdin.end();
   });
 }
