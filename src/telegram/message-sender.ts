@@ -301,10 +301,13 @@ export class MessageSender {
       parts.push(truncatedContent);
     }
 
-    // Add background tasks
-    if (state.backgroundTasks.length > 0) {
+    // Add background tasks (cap display to prevent exceeding Telegram's 4096-char limit)
+    const activeTasks = state.backgroundTasks.filter(t => t.status !== 'complete' && t.status !== 'error');
+    const finishedTasks = state.backgroundTasks.filter(t => t.status === 'complete' || t.status === 'error');
+    const displayTasks = [...activeTasks, ...finishedTasks.slice(-3)].slice(0, 8);
+    if (displayTasks.length > 0) {
       if (state.content || state.currentOperation) parts.push('');
-      for (const task of state.backgroundTasks) {
+      for (const task of displayTasks) {
         const statusIcon = task.status === 'complete' ? TOOL_ICONS.complete
           : task.status === 'error' ? TOOL_ICONS.error
           : getSpinnerFrame(state.spinnerIndex);

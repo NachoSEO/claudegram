@@ -6,7 +6,7 @@ import { z } from 'zod';
 // Zod schema for Telegraph account file
 const telegraphAccountSchema = z.object({
   access_token: z.string().min(1),
-  auth_url: z.string(),
+  auth_url: z.string().url(),
   short_name: z.string(),
 });
 

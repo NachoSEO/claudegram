@@ -173,8 +173,8 @@ export async function handleVoice(ctx: Context): Promise<void> {
   } catch (error) {
     if ((error as Error).message === 'Queue cleared') return;
 
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Voice] Error:', sanitizeError(error));
+    const errorMessage = sanitizeError(error);
+    console.error('[Voice] Error:', errorMessage);
 
     // Try to update ack message with error
     try {
@@ -242,8 +242,8 @@ async function handleTranscribeOnly(
 
     await sendTranscriptResult(ctx, transcript);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Transcribe] Voice ForceReply error:', sanitizeError(error));
+    const errorMessage = sanitizeError(error);
+    console.error('[Transcribe] Voice ForceReply error:', errorMessage);
     try {
       await ctx.api.editMessageText(chatId, ackMsg.message_id, `❌ ${errorMessage}`, { parse_mode: undefined });
     } catch {

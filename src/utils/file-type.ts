@@ -114,7 +114,7 @@ function readHeaderBytes(filePath: string, length = 16): { buffer: Buffer; bytes
   try {
     const buffer = Buffer.alloc(length);
     const bytesRead = fs.readSync(fd, buffer, 0, length, 0);
-    return { buffer, bytesRead };
+    return { buffer: buffer.subarray(0, bytesRead), bytesRead };
   } finally {
     fs.closeSync(fd);
   }
