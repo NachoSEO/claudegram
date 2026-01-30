@@ -55,6 +55,7 @@ export function getAvailableCommands(): string {
 • \`/resume\` \\- Pick from recent sessions to resume
 • \`/continue\` \\- Resume most recent session
 • \`/sessions\` \\- List all sessions
+• \`/teleport\` \\- Move session to terminal \\(forked\\)
 • \`/clear\` \\- Clear session and start fresh
 • \`/status\` \\- Show current session info
 
@@ -85,5 +86,6 @@ export function getAvailableCommands(): string {
 • \`/restartbot\` \\- Restart the bot process
 • \`/ping\` \\- Check if bot is responsive
 • \`/cancel\` \\- Cancel current request
-• \`/mode\` \\- Toggle streaming mode`;
+• \`/mode\` \\- Toggle streaming mode
+• \`/terminalui\` \\- Toggle terminal\\-style display`;
 }

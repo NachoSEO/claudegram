@@ -2,15 +2,24 @@ import { config } from '../config.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { z } from 'zod';
+
+// Zod schema for TTS settings
+const ttsSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  voice: z.string().optional(),
+  autoplay: z.boolean().optional(),
+});
+
+// Zod schema for the full TTS settings file
+const ttsSettingsFileSchema = z.object({
+  settings: z.record(z.string(), ttsSettingsSchema),
+});
 
 export interface TTSSettings {
   enabled: boolean;
   voice: string;
   autoplay: boolean;
-}
-
-interface TTSSettingsFile {
-  settings: Record<string, TTSSettings>;
 }
 
 const SETTINGS_DIR = path.join(os.homedir(), '.claudegram');
@@ -62,9 +71,16 @@ function loadSettings(): void {
 
   try {
     const raw = fs.readFileSync(SETTINGS_FILE, 'utf-8');
-    const parsed = JSON.parse(raw) as TTSSettingsFile;
-    if (!parsed || typeof parsed !== 'object' || !parsed.settings) return;
-    for (const [chatId, settings] of Object.entries(parsed.settings)) {
+    const parsed = JSON.parse(raw);
+
+    // Validate with Zod schema
+    const result = ttsSettingsFileSchema.safeParse(parsed);
+    if (!result.success) {
+      console.warn('[TTS] Invalid settings file format, starting fresh:', result.error.message);
+      return;
+    }
+
+    for (const [chatId, settings] of Object.entries(result.data.settings)) {
       const id = Number(chatId);
       if (!Number.isFinite(id)) continue;
       chatTTSSettings.set(id, normalizeSettings(settings));

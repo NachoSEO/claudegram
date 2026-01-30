@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { config } from '../config.js';
+import { transcribeFile } from '../audio/transcribe.js';
+import { sanitizeError, sanitizePath } from '../utils/sanitize.js';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -29,8 +31,6 @@ export interface ExtractResult {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const GROQ_WHISPER_ENDPOINT = 'https://api.groq.com/openai/v1/audio/transcriptions';
-const GROQ_WHISPER_MODEL = 'whisper-large-v3-turbo';
 const MAX_GROQ_FILE_SIZE_MB = 25; // Groq free tier limit
 const CHUNK_DURATION_SEC = 600; // 10 min chunks for large audio
 const YTDLP_TIMEOUT_MS = 180_000; // 3 min
@@ -67,10 +67,15 @@ export function detectPlatform(url: string): Platform {
   return 'unknown';
 }
 
+/**
+ * Validate a URL for safe external fetching.
+ * Only allows http/https protocols to prevent SSRF attacks.
+ */
 export function isValidUrl(url: string): boolean {
   try {
-    new URL(url);
-    return true;
+    const parsed = new URL(url);
+    // Only allow http/https to prevent SSRF attacks (file://, ftp://, etc.)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
   } catch {
     return false;
   }
@@ -396,6 +401,10 @@ async function transcribeAudioFile(
   }
 
   const fileSizeMB = fs.statSync(filePath).size / (1024 * 1024);
+  const transcribeOptions = {
+    timeoutMs: config.EXTRACT_TRANSCRIBE_TIMEOUT_MS,
+    allowEmpty: true,
+  };
 
   if (fileSizeMB > MAX_GROQ_FILE_SIZE_MB) {
     const chunkDir = path.join(path.dirname(filePath), 'chunks');
@@ -406,42 +415,14 @@ async function transcribeAudioFile(
 
     for (let i = 0; i < chunks.length; i++) {
       onProgress?.(`\u{1F4DD} Transcribing chunk ${i + 1}/${chunks.length}...`);
-      const text = await transcribeSingleFile(chunks[i]);
+      const text = await transcribeFile(chunks[i], transcribeOptions);
       transcripts.push(text);
     }
 
     return transcripts.join(' ');
   }
 
-  return transcribeSingleFile(filePath);
-}
-
-async function transcribeSingleFile(filePath: string): Promise<string> {
-  const fileBuffer = fs.readFileSync(filePath);
-  const fileName = path.basename(filePath);
-
-  const formData = new FormData();
-  formData.append('file', new Blob([fileBuffer]), fileName);
-  formData.append('model', GROQ_WHISPER_MODEL);
-  formData.append('language', config.VOICE_LANGUAGE);
-  formData.append('response_format', 'json');
-
-  const response = await fetch(GROQ_WHISPER_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.GROQ_API_KEY}`,
-    },
-    body: formData,
-    signal: AbortSignal.timeout(config.EXTRACT_TRANSCRIBE_TIMEOUT_MS),
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`Groq API error ${response.status}: ${body.slice(0, 300)}`);
-  }
-
-  const result = (await response.json()) as { text?: string };
-  return (result.text || '').trim();
+  return transcribeFile(filePath, transcribeOptions);
 }
 
 // ── Main Extract Function ──────────────────────────────────────────
@@ -551,7 +532,7 @@ export async function extractMedia(opts: ExtractOptions): Promise<ExtractResult>
     return result;
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[extract] Error:', error);
+    console.error('[extract] Error:', sanitizeError(error));
     throw new Error(msg);
   } finally {
     result._tempDir = tempDir;
@@ -567,8 +548,8 @@ export function cleanupExtractResult(result: ExtractResult): void {
     const tempDir = result._tempDir;
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup errors
+    } catch (e) {
+      console.warn(`[extract] Cleanup failed for ${sanitizePath(tempDir)}:`, sanitizeError(e));
     }
     return;
   }
@@ -582,8 +563,8 @@ export function cleanupExtractResult(result: ExtractResult): void {
         fs.rmSync(dir, { recursive: true, force: true });
         return;
       }
-    } catch {
-      // ignore cleanup errors
+    } catch (e) {
+      console.warn(`[extract] Cleanup failed for ${sanitizePath(p)}:`, sanitizeError(e));
     }
   }
 }

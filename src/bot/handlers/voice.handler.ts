@@ -1,5 +1,4 @@
 import { Context } from 'grammy';
-import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -15,15 +14,13 @@ import {
   getQueuePosition,
   setAbortController,
 } from '../../claude/request-queue.js';
-import { escapeMarkdownV2 } from '../../telegram/markdown.js';
+import { escapeMarkdownV2 as esc } from '../../telegram/markdown.js';
 import { getStreamingMode } from './command.handler.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile } from '../../audio/transcribe.js';
 import { sendTranscriptResult } from './command.handler.js';
-
-function esc(text: string): string {
-  return escapeMarkdownV2(text);
-}
+import { downloadFileSecure, getTelegramFileUrl } from '../../utils/download.js';
+import { sanitizeError, sanitizePath } from '../../utils/sanitize.js';
 
 export async function handleVoice(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
@@ -83,31 +80,13 @@ export async function handleVoice(ctx: Context): Promise<void> {
   try {
     // Download voice file from Telegram (with retry for transient network errors)
     const file = await ctx.api.getFile(voice.file_id);
-    const fileUrl = `https://api.telegram.org/file/bot${config.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+    const fileUrl = getTelegramFileUrl(config.TELEGRAM_BOT_TOKEN, file.file_path!);
 
-    // Download using curl (more reliable than Node fetch on this network)
+    // Download using curl with secure stdin config (prevents token exposure in ps)
     const ext = voice.mime_type?.includes('ogg') ? '.ogg' : '.oga';
     tempFilePath = path.join(os.tmpdir(), `claudegram_voice_${messageId}${ext}`);
 
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        'curl',
-        ['-sS', '-f', '--connect-timeout', '10', '--max-time', '30',
-         '--retry', '2', '--retry-delay', '2',
-         '-o', tempFilePath!,
-         fileUrl],
-        { timeout: 60_000 },
-        (error, _stdout, stderr) => {
-          if (error) {
-            const msg = (stderr || '').trim() || error.message;
-            console.error(`[Voice] curl download failed:`, msg);
-            reject(new Error(`Failed to download voice file: ${msg}`));
-          } else {
-            resolve();
-          }
-        }
-      );
-    });
+    await downloadFileSecure(fileUrl, tempFilePath);
 
     const audioBuffer = fs.readFileSync(tempFilePath);
     if (!audioBuffer.length) {
@@ -133,7 +112,10 @@ export async function handleVoice(ctx: Context): Promise<void> {
       } catch {
         try {
           await ctx.api.deleteMessage(chatId, ackMsg.message_id);
-        } catch { /* ignore */ }
+        } catch (e) {
+          // Telegram message deletion can fail if already deleted or expired
+          console.debug('[Voice] Failed to delete ack message:', e instanceof Error ? e.message : e);
+        }
       }
 
       await messageSender.sendMessage(ctx, `👤 ${transcript}`);
@@ -141,7 +123,9 @@ export async function handleVoice(ctx: Context): Promise<void> {
       // Remove ack message
       try {
         await ctx.api.deleteMessage(chatId, ackMsg.message_id);
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.debug('[Voice] Failed to delete ack message:', e instanceof Error ? e.message : e);
+      }
     }
 
     // Check if already processing - show queue position
@@ -187,7 +171,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
     if ((error as Error).message === 'Queue cleared') return;
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Voice] Error:', error);
+    console.error('[Voice] Error:', sanitizeError(error));
 
     // Try to update ack message with error
     try {
@@ -205,8 +189,10 @@ export async function handleVoice(ctx: Context): Promise<void> {
     if (tempFilePath && fs.existsSync(tempFilePath)) {
       try {
         fs.unlinkSync(tempFilePath);
-        console.log(`[Voice] Cleaned up ${tempFilePath}`);
-      } catch { /* ignore */ }
+        console.log(`[Voice] Cleaned up ${sanitizePath(tempFilePath)}`);
+      } catch (e) {
+        console.warn(`[Voice] Cleanup failed for ${sanitizePath(tempFilePath)}:`, sanitizeError(e));
+      }
     }
   }
 }
@@ -227,29 +213,12 @@ async function handleTranscribeOnly(
 
   try {
     const file = await ctx.api.getFile(voice.file_id);
-    const fileUrl = `https://api.telegram.org/file/bot${config.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
+    const fileUrl = getTelegramFileUrl(config.TELEGRAM_BOT_TOKEN, file.file_path!);
 
     const ext = voice.mime_type?.includes('ogg') ? '.ogg' : '.oga';
     tempFilePath = path.join(os.tmpdir(), `claudegram_transcribe_${messageId}${ext}`);
 
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        'curl',
-        ['-sS', '-f', '--connect-timeout', '10', '--max-time', '30',
-         '--retry', '2', '--retry-delay', '2',
-         '-o', tempFilePath!,
-         fileUrl],
-        { timeout: 60_000 },
-        (error, _stdout, stderr) => {
-          if (error) {
-            const msg = (stderr || '').trim() || error.message;
-            reject(new Error(`Failed to download voice file: ${msg}`));
-          } else {
-            resolve();
-          }
-        }
-      );
-    });
+    await downloadFileSecure(fileUrl, tempFilePath);
 
     const audioBuffer = fs.readFileSync(tempFilePath);
     if (!audioBuffer.length) {
@@ -259,12 +228,16 @@ async function handleTranscribeOnly(
     const transcript = await transcribeFile(tempFilePath);
 
     // Remove ack
-    try { await ctx.api.deleteMessage(chatId, ackMsg.message_id); } catch { /* ignore */ }
+    try {
+      await ctx.api.deleteMessage(chatId, ackMsg.message_id);
+    } catch (e) {
+      console.debug('[Transcribe] Failed to delete ack message:', e instanceof Error ? e.message : e);
+    }
 
     await sendTranscriptResult(ctx, transcript);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Transcribe] Voice ForceReply error:', error);
+    console.error('[Transcribe] Voice ForceReply error:', sanitizeError(error));
     try {
       await ctx.api.editMessageText(chatId, ackMsg.message_id, `❌ ${errorMessage}`, { parse_mode: undefined });
     } catch {
@@ -272,7 +245,11 @@ async function handleTranscribeOnly(
     }
   } finally {
     if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try { fs.unlinkSync(tempFilePath); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (e) {
+        console.warn(`[Transcribe] Cleanup failed for ${sanitizePath(tempFilePath)}:`, sanitizeError(e));
+      }
     }
   }
 }

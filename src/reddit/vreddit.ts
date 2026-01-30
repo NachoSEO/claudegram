@@ -4,11 +4,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { config } from '../config.js';
-import { escapeMarkdownV2 } from '../telegram/markdown.js';
 
 const USER_AGENT = 'claudegram/1.0';
 const DASH_FETCH_TIMEOUT_MS = 15000;
-const PAGE_FETCH_TIMEOUT_MS = 15000;
 const VIDEO_DOWNLOAD_TIMEOUT_SEC = 120;
 const FFMPEG_TIMEOUT_MS = 120000;
 const FFMPEG_COMPRESS_TIMEOUT_MS = 300000; // 5 min for compression
@@ -18,8 +16,17 @@ type VideoSource =
   | { type: 'external'; url: string }
   | null;
 
-function esc(text: string): string {
-  return escapeMarkdownV2(text);
+/**
+ * Validate URL protocol to prevent SSRF attacks.
+ * Only allows http/https protocols.
+ */
+function isValidProtocol(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 async function replyMd(ctx: Context, text: string): Promise<void> {
@@ -43,15 +50,24 @@ function normalizeInput(input: string): string | null {
 }
 
 function ensureUrl(token: string): string | null {
-  if (token.startsWith('http://') || token.startsWith('https://')) return token;
-  if (token.startsWith('www.')) return `https://${token}`;
-  if (token.startsWith('reddit.com') || token.startsWith('old.reddit.com') || token.startsWith('new.reddit.com') || token.startsWith('m.reddit.com') || token.startsWith('redd.it') || token.startsWith('v.redd.it')) {
-    return `https://${token}`;
+  let url: string | null = null;
+
+  if (token.startsWith('http://') || token.startsWith('https://')) {
+    url = token;
+  } else if (token.startsWith('www.')) {
+    url = `https://${token}`;
+  } else if (token.startsWith('reddit.com') || token.startsWith('old.reddit.com') || token.startsWith('new.reddit.com') || token.startsWith('m.reddit.com') || token.startsWith('redd.it') || token.startsWith('v.redd.it')) {
+    url = `https://${token}`;
+  } else if (/^[a-z0-9]{5,10}$/i.test(token)) {
+    url = `https://www.reddit.com/comments/${token}`;
   }
-  if (/^[a-z0-9]{5,10}$/i.test(token)) {
-    return `https://www.reddit.com/comments/${token}`;
+
+  // Validate protocol to prevent SSRF
+  if (url && !isValidProtocol(url)) {
+    return null;
   }
-  return null;
+
+  return url;
 }
 
 function isRedditHost(hostname: string): boolean {
@@ -95,6 +111,8 @@ function extractExternalUrlFromHtml(html: string): string | null {
   // Skip Reddit self-links and images
   if (url.includes('reddit.com') || url.includes('redd.it')) return null;
   if (/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)) return null;
+  // Validate protocol to prevent SSRF
+  if (!isValidProtocol(url)) return null;
   return url;
 }
 
@@ -143,6 +161,11 @@ async function fetchHtml(url: string): Promise<string> {
   });
 }
 
+// Limits to prevent ReDoS and resource exhaustion
+const MAX_DASH_XML_SIZE = 512 * 1024; // 512KB max manifest size
+const MAX_ADAPTATION_SETS = 20;
+const MAX_REPRESENTATIONS = 50;
+
 async function parseDashManifest(dashUrl: string): Promise<{ videoUrl?: string; audioUrl?: string } | null> {
   try {
     const response = await fetchWithTimeout(dashUrl, { headers: { 'User-Agent': USER_AGENT } }, DASH_FETCH_TIMEOUT_MS);
@@ -151,12 +174,27 @@ async function parseDashManifest(dashUrl: string): Promise<{ videoUrl?: string; 
     }
     const xml = await response.text();
 
+    // Prevent ReDoS by limiting input size
+    if (xml.length > MAX_DASH_XML_SIZE) {
+      console.warn(`[vReddit] DASH manifest too large (${xml.length} bytes), skipping`);
+      return null;
+    }
+
     let bestVideo: { bandwidth: number; url: string } | null = null;
     let bestAudio: { bandwidth: number; url: string } | null = null;
 
     const adaptationRe = /<AdaptationSet([^>]*)>([\s\S]*?)<\/AdaptationSet>/gi;
     let adaptationMatch: RegExpExecArray | null;
+    let adaptationCount = 0;
+    let totalRepCount = 0;
+
     while ((adaptationMatch = adaptationRe.exec(xml)) !== null) {
+      // Limit iterations to prevent DoS
+      if (++adaptationCount > MAX_ADAPTATION_SETS) {
+        console.warn('[vReddit] Too many AdaptationSets, stopping parse');
+        break;
+      }
+
       const attrs = adaptationMatch[1] || '';
       const body = adaptationMatch[2] || '';
       let contentType = '';
@@ -173,7 +211,14 @@ async function parseDashManifest(dashUrl: string): Promise<{ videoUrl?: string; 
 
       const repRe = /<Representation([^>]*)>([\s\S]*?)<\/Representation>/gi;
       let repMatch: RegExpExecArray | null;
+
       while ((repMatch = repRe.exec(body)) !== null) {
+        // Limit total representations across all adaptation sets
+        if (++totalRepCount > MAX_REPRESENTATIONS) {
+          console.warn('[vReddit] Too many Representations, stopping parse');
+          break;
+        }
+
         const repAttrs = repMatch[1] || '';
         const repBody = repMatch[2] || '';
         const bandwidthMatch = repAttrs.match(/bandwidth="(\d+)"/i);
@@ -198,6 +243,8 @@ async function parseDashManifest(dashUrl: string): Promise<{ videoUrl?: string; 
           }
         }
       }
+
+      if (totalRepCount > MAX_REPRESENTATIONS) break;
     }
 
     return { videoUrl: bestVideo?.url, audioUrl: bestAudio?.url };
@@ -590,16 +637,17 @@ export async function executeVReddit(ctx: Context, input: string): Promise<void>
     }
 
     if (finalSize > maxVideoBytes) {
-      // Save the original uncompressed video to the workspace directory
+      // Save the original uncompressed video to a temp directory for later retrieval
+      // Uses OS temp directory rather than hardcoded paths
       const timestamp = Date.now();
-      const savedDir = path.join(os.homedir(), 'Workspace', 'vreddit-originals');
+      const savedDir = path.join(os.tmpdir(), 'claudegram-vreddit-originals');
       try {
         fs.mkdirSync(savedDir, { recursive: true });
         const savedPath = path.join(savedDir, `vreddit-${timestamp}.mp4`);
         fs.copyFileSync(finalPath, savedPath);
         console.log(`[vReddit] Saved original (${(finalSize / 1024 / 1024).toFixed(1)}MB) to ${savedPath}`);
       } catch (saveError) {
-        console.warn('[vReddit] Failed to save original to workspace:', saveError);
+        console.warn('[vReddit] Failed to save original to temp:', saveError);
       }
 
       // Stage 1: CRF-based compression (fast, good quality)
@@ -655,8 +703,8 @@ export async function executeVReddit(ctx: Context, input: string): Promise<void>
     if (ackMsg && ctx.chat?.id) {
       try {
         await ctx.api.deleteMessage(ctx.chat.id, ackMsg.message_id);
-      } catch {
-        // ignore delete errors
+      } catch (e) {
+        console.debug('[vReddit] Failed to delete ack message:', e instanceof Error ? e.message : e);
       }
     }
     if (tempDir) {

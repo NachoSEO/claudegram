@@ -1,10 +1,18 @@
 import Telegraph from 'telegra.ph';
 import * as fs from 'fs';
 import * as path from 'path';
+import { z } from 'zod';
+
+// Zod schema for Telegraph account file
+const telegraphAccountSchema = z.object({
+  access_token: z.string().min(1),
+  auth_url: z.string(),
+  short_name: z.string(),
+});
 
 // Telegraph client singleton
 let telegraphClient: Telegraph | null = null;
-let telegraphAccount: { access_token: string; auth_url: string; short_name: string } | null = null;
+let telegraphAccount: z.infer<typeof telegraphAccountSchema> | null = null;
 
 // Thresholds for when to use Telegraph vs inline
 const TELEGRAPH_THRESHOLD = 2500; // Use Telegraph for messages longer than this
@@ -18,12 +26,21 @@ export async function initTelegraph(): Promise<void> {
     const accountFile = path.join(process.cwd(), '.telegraph-account.json');
 
     if (fs.existsSync(accountFile)) {
-      // Load existing account
-      const saved = JSON.parse(fs.readFileSync(accountFile, 'utf-8'));
-      telegraphClient = new Telegraph(saved.access_token);
-      telegraphAccount = saved;
-      console.log('[Telegraph] Loaded existing account');
-    } else {
+      // Load existing account with schema validation
+      const raw = JSON.parse(fs.readFileSync(accountFile, 'utf-8'));
+      const result = telegraphAccountSchema.safeParse(raw);
+
+      if (result.success) {
+        telegraphClient = new Telegraph(result.data.access_token);
+        telegraphAccount = result.data;
+        console.log('[Telegraph] Loaded existing account');
+      } else {
+        console.warn('[Telegraph] Invalid account file, creating new account:', result.error.message);
+        // Fall through to create new account
+      }
+    }
+
+    if (!telegraphClient) {
       // Create new account - need empty token first
       telegraphClient = new Telegraph('');
 

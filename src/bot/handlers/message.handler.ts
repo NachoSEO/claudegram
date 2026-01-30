@@ -405,6 +405,12 @@ async function handleAgentReply(
             onProgress: (progressText) => {
               messageSender.updateStream(ctx, progressText);
             },
+            onToolStart: (toolName, input) => {
+              messageSender.updateToolOperation(chatId, toolName, input);
+            },
+            onToolEnd: () => {
+              messageSender.clearToolOperation(chatId);
+            },
             abortController,
             command: mode,
           });
@@ -502,6 +508,12 @@ async function handleStreamingResponse(
     const response = await sendToAgent(chatId, message, {
       onProgress: (progressText) => {
         messageSender.updateStream(ctx, progressText);
+      },
+      onToolStart: (toolName, input) => {
+        messageSender.updateToolOperation(chatId, toolName, input);
+      },
+      onToolEnd: () => {
+        messageSender.clearToolOperation(chatId);
       },
       abortController,
     });

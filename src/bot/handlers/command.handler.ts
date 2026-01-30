@@ -22,8 +22,9 @@ import {
 } from '../../claude/request-queue.js';
 import { createTelegraphFromFile, createTelegraphPage } from '../../telegram/telegraph.js';
 import { isMediumUrl, fetchMediumArticle, FreediumArticle } from '../../medium/freedium.js';
-import { escapeMarkdownV2 } from '../../telegram/markdown.js';
+import { escapeMarkdownV2 as esc } from '../../telegram/markdown.js';
 import { getTTSSettings, setTTSEnabled, setTTSVoice, setTTSAutoplay } from '../../tts/tts-settings.js';
+import { getTerminalUISettings, setTerminalUIEnabled } from '../../telegram/terminal-settings.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
 import { executeVReddit } from '../../reddit/vreddit.js';
@@ -44,15 +45,11 @@ import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
+import { sanitizeError, sanitizePath } from '../../utils/sanitize.js';
 
 // Helper for consistent MarkdownV2 replies
 async function replyMd(ctx: Context, text: string): Promise<void> {
   await ctx.reply(text, { parse_mode: 'MarkdownV2' });
-}
-
-// Escape dynamic text for MarkdownV2
-function esc(text: string): string {
-  return escapeMarkdownV2(text);
 }
 
 /** Build status lines appended to project confirmation messages. */
@@ -79,7 +76,6 @@ export function projectStatusSuffix(chatId: number): string {
 export function resumeCommandMessage(sessionId: string): string {
   return `\`claude --resume ${sessionId}\``;
 }
-
 const OPENAI_TTS_VOICES = [
   'alloy', 'ash', 'ballad', 'coral',
   'echo', 'fable', 'nova', 'onyx',
@@ -558,6 +554,8 @@ function getProjectState(chatId: number): ProjectBrowserState {
       existing.current = root;
       existing.page = 0;
     }
+    // Refresh timestamp on access to keep active sessions alive
+    projectBrowserTimestamps.set(chatId, Date.now());
     return existing;
   }
 
@@ -573,6 +571,7 @@ function getProjectState(chatId: number): ProjectBrowserState {
     page: 0,
   };
   projectBrowserState.set(chatId, state);
+  projectBrowserTimestamps.set(chatId, Date.now());
   return state;
 }
 
@@ -833,6 +832,61 @@ export async function handleModeCallback(ctx: Context): Promise<void> {
   );
 }
 
+export async function handleTerminalUI(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const settings = getTerminalUISettings(chatId);
+  const currentStatus = settings.enabled ? 'ON' : 'OFF';
+
+  const keyboard = [
+    [
+      {
+        text: settings.enabled ? '✓ On' : 'On',
+        callback_data: 'terminalui:on'
+      },
+      {
+        text: !settings.enabled ? '✓ Off' : 'Off',
+        callback_data: 'terminalui:off'
+      },
+    ],
+  ];
+
+  const description = settings.enabled
+    ? '_Shows spinner animations and tool status during operations_'
+    : '_Classic streaming mode with simple cursor_';
+
+  await ctx.reply(
+    `🖥️ *Terminal UI Mode*\n\nCurrent: *${currentStatus}*\n${description}`,
+    {
+      parse_mode: 'MarkdownV2',
+      reply_markup: { inline_keyboard: keyboard },
+    }
+  );
+}
+
+export async function handleTerminalUICallback(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith('terminalui:')) return;
+
+  const newState = data.replace('terminalui:', '') === 'on';
+  setTerminalUIEnabled(chatId, newState);
+
+  const statusText = newState ? 'ON' : 'OFF';
+  const description = newState
+    ? '_Shows spinner animations and tool status during operations_'
+    : '_Classic streaming mode with simple cursor_';
+
+  await ctx.answerCallbackQuery({ text: `Terminal UI ${statusText}!` });
+  await ctx.editMessageText(
+    `✅ Terminal UI *${statusText}*\n\n${description}`,
+    { parse_mode: 'MarkdownV2' }
+  );
+}
+
 export async function handleTTS(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
@@ -1014,7 +1068,7 @@ export async function handleRestartBot(ctx: Context): Promise<void> {
     );
     child.unref();
   } catch (error) {
-    console.error('[BotCtl] Failed to restart:', error);
+    console.error('[BotCtl] Failed to restart:', sanitizeError(error));
   }
 }
 
@@ -1394,6 +1448,41 @@ export async function handleSessions(ctx: Context): Promise<void> {
   }
 
   message += '\n_Use `/resume` to switch sessions or `/continue` to resume the last one\\._';
+
+  await replyMd(ctx, message);
+}
+
+export async function handleTeleport(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const session = sessionManager.getSession(chatId);
+
+  if (!session) {
+    await replyMd(ctx, 'ℹ️ No active session to teleport\\.\n\nStart a conversation first with `/project <name>`\\.');
+    return;
+  }
+
+  if (!session.claudeSessionId) {
+    await replyMd(ctx, 'ℹ️ No Claude session available yet\\.\n\nSend a message first to start a session, then use `/teleport`\\.');
+    return;
+  }
+
+  const projectName = path.basename(session.workingDirectory);
+  const command = `cd "${session.workingDirectory}" && claude --resume ${session.claudeSessionId}`;
+
+  const message = `🚀 *Teleport to Terminal*
+
+*Project:* \`${esc(projectName)}\`
+*Session:* \`${esc(session.claudeSessionId.substring(0, 8))}\\.\\.\\.\`
+
+Copy and run in your terminal:
+
+\`\`\`
+${esc(command)}
+\`\`\`
+
+_Both Telegram and terminal can continue independently \\(forked session\\)\\._`;
 
   await replyMd(ctx, message);
 }
@@ -1888,18 +1977,8 @@ export async function handleRedditActionCallback(ctx: Context): Promise<void> {
 const pendingMediumResults = new Map<number, { article: FreediumArticle; messageId: number; expiresAt: number }>();
 const MEDIUM_RESULT_TTL_MS = 5 * 60 * 1000;
 
-// Periodic cleanup of expired pending results to prevent memory leaks.
-// .unref() so this timer doesn't prevent graceful process shutdown.
-const _cleanupInterval = setInterval(() => {
-  const now = Date.now();
-  for (const [msgId, entry] of pendingRedditResults) {
-    if (now > entry.expiresAt) pendingRedditResults.delete(msgId);
-  }
-  for (const [chatId, entry] of pendingMediumResults) {
-    if (now > entry.expiresAt) pendingMediumResults.delete(chatId);
-  }
-}, REDDIT_RESULT_TTL_MS);
-_cleanupInterval.unref();
+// NOTE: cleanup for pendingRedditResults and pendingMediumResults is handled
+// by the consolidated cleanup interval at the bottom of this file.
 
 /**
  * Fetch a Medium article via Freedium and present inline action buttons.
@@ -2138,7 +2217,11 @@ export async function sendTranscriptResult(ctx: Context, transcript: string): Pr
         caption: `🎤 Transcript (${transcript.length} chars)`,
       });
     } finally {
-      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      try {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      } catch (e) {
+        console.warn(`[transcribe] Cleanup failed for ${sanitizePath(tmpPath)}:`, sanitizeError(e));
+      }
     }
   }
 }
@@ -2177,12 +2260,16 @@ async function transcribeAndSend(
     const transcript = await transcribeFile(tempFilePath);
 
     // Remove ack
-    try { await ctx.api.deleteMessage(chatId, ackMsg.message_id); } catch { /* ignore */ }
+    try {
+      await ctx.api.deleteMessage(chatId, ackMsg.message_id);
+    } catch (e) {
+      console.debug('[Transcribe] Failed to delete ack message:', e instanceof Error ? e.message : e);
+    }
 
     await sendTranscriptResult(ctx, transcript);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Transcribe] Error:', error);
+    console.error('[Transcribe] Error:', sanitizeError(error));
     try {
       await ctx.api.editMessageText(chatId, ackMsg.message_id, `❌ ${errorMessage}`, { parse_mode: undefined });
     } catch {
@@ -2190,7 +2277,11 @@ async function transcribeAndSend(
     }
   } finally {
     if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try { fs.unlinkSync(tempFilePath); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(tempFilePath);
+      } catch (e) {
+        console.warn(`[Transcribe] Cleanup failed for ${sanitizePath(tempFilePath)}:`, sanitizeError(e));
+      }
     }
   }
 }
@@ -2263,6 +2354,52 @@ export async function handleTranscribeDocument(ctx: Context): Promise<void> {
 // Store pending extract URLs keyed by chatId so the callback knows what to process
 const pendingExtractUrls = new Map<number, string>();
 
+// TTLs for cleanup (in ms)
+const EXTRACT_URL_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const PROJECT_BROWSER_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+// Track timestamps for extract URLs and project browser
+const pendingExtractTimestamps = new Map<number, number>();
+const projectBrowserTimestamps = new Map<number, number>();
+
+/**
+ * Consolidated cleanup interval to prevent memory leaks from unbounded Maps.
+ * Runs every 60 seconds and removes stale entries.
+ * .unref() so this timer doesn't prevent graceful process shutdown.
+ */
+const _cleanupInterval = setInterval(() => {
+  const now = Date.now();
+
+  // Clean pendingRedditResults (keyed by messageId, has expiresAt)
+  for (const [msgId, entry] of pendingRedditResults.entries()) {
+    if (now > entry.expiresAt) pendingRedditResults.delete(msgId);
+  }
+
+  // Clean pendingMediumResults (has expiresAt field)
+  for (const [chatId, entry] of pendingMediumResults.entries()) {
+    if (now > entry.expiresAt) {
+      pendingMediumResults.delete(chatId);
+    }
+  }
+
+  // Clean pendingExtractUrls
+  for (const [chatId, timestamp] of pendingExtractTimestamps.entries()) {
+    if (now - timestamp > EXTRACT_URL_TTL_MS) {
+      pendingExtractUrls.delete(chatId);
+      pendingExtractTimestamps.delete(chatId);
+    }
+  }
+
+  // Clean projectBrowserState
+  for (const [chatId, timestamp] of projectBrowserTimestamps.entries()) {
+    if (now - timestamp > PROJECT_BROWSER_TTL_MS) {
+      projectBrowserState.delete(chatId);
+      projectBrowserTimestamps.delete(chatId);
+    }
+  }
+}, 60_000);
+_cleanupInterval.unref();
+
 export async function handleExtract(ctx: Context): Promise<void> {
   const text = ctx.message?.text || '';
   const args = text.split(' ').slice(1).join(' ').trim();
@@ -2311,8 +2448,9 @@ export async function showExtractMenu(ctx: Context, url: string): Promise<void> 
 
   const label = platformLabel(platform);
 
-  // Store URL for callback
+  // Store URL for callback (with timestamp for cleanup)
   pendingExtractUrls.set(chatId, url);
+  pendingExtractTimestamps.set(chatId, Date.now());
 
   await ctx.reply(
     `\u{1F4E5} *Extract from ${esc(label)}*\n\n` +
@@ -2361,7 +2499,9 @@ export async function handleExtractCallback(ctx: Context): Promise<void> {
     try {
       const menuMsgId = ctx.callbackQuery?.message?.message_id;
       if (menuMsgId) await ctx.api.deleteMessage(chatId, menuMsgId);
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.debug('[extract] Failed to delete menu message:', e instanceof Error ? e.message : e);
+    }
 
     await executeExtract(ctx, url, 'text', subtitleFormat);
     return;
@@ -2433,7 +2573,9 @@ export async function handleExtractCallback(ctx: Context): Promise<void> {
     if (menuMsgId) {
       await ctx.api.deleteMessage(chatId, menuMsgId);
     }
-  } catch { /* ignore */ }
+  } catch (e) {
+    console.debug('[extract] Failed to delete menu message:', e instanceof Error ? e.message : e);
+  }
 
   await executeExtract(ctx, url, mode);
 }
@@ -2447,7 +2589,10 @@ export async function executeExtract(ctx: Context, url: string, mode: ExtractMod
   const updateAck = async (text: string) => {
     try {
       await ctx.api.editMessageText(chatId, ackMsg.message_id, text, { parse_mode: undefined });
-    } catch { /* ignore */ }
+    } catch (e) {
+      // Update can fail if message was deleted or content unchanged
+      console.debug('[extract] Failed to update ack message:', e instanceof Error ? e.message : e);
+    }
   };
 
   let result: ExtractResult | null = null;
@@ -2461,7 +2606,11 @@ export async function executeExtract(ctx: Context, url: string, mode: ExtractMod
     });
 
     // Delete ack message
-    try { await ctx.api.deleteMessage(chatId, ackMsg.message_id); } catch { /* ignore */ }
+    try {
+      await ctx.api.deleteMessage(chatId, ackMsg.message_id);
+    } catch (e) {
+      console.debug('[extract] Failed to delete ack message:', e instanceof Error ? e.message : e);
+    }
 
     // Send results
     const platform = platformLabel(result.platform);
@@ -2533,7 +2682,11 @@ export async function executeExtract(ctx: Context, url: string, mode: ExtractMod
             caption: `\u{1F4DD} Transcript (${result.transcript.length} chars)`,
           });
         } finally {
-          try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+          try {
+            if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+          } catch (e) {
+            console.warn(`[extract] Cleanup failed for ${sanitizePath(tmpPath)}:`, sanitizeError(e));
+          }
         }
       }
     } else if ((mode === 'text' || mode === 'all') && !result.subtitlePath) {
@@ -2553,7 +2706,7 @@ export async function executeExtract(ctx: Context, url: string, mode: ExtractMod
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[extract] Error:', error);
+    console.error('[extract] Error:', sanitizeError(error));
     try {
       await ctx.api.editMessageText(chatId, ackMsg.message_id, `\u{274C} ${errorMessage}`, { parse_mode: undefined });
     } catch {

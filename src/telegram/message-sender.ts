@@ -2,18 +2,39 @@ import { Context, Api, InputFile } from 'grammy';
 import { config } from '../config.js';
 import { processMessageForTelegram, convertToTelegramMarkdown, escapeMarkdownV2 } from './markdown.js';
 import { shouldUseTelegraph, createTelegraphPage, createTelegraphFromFile } from './telegraph.js';
+import { isTerminalUIEnabled } from './terminal-settings.js';
+import {
+  getSpinnerFrame,
+  getToolIcon,
+  renderStatusLine,
+  extractToolDetail,
+  TOOL_ICONS,
+} from './terminal-renderer.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
+export interface ToolOperation {
+  name: string;
+  detail?: string;
+}
+
 interface StreamState {
+  chatId: number;
   messageId: number | null;
   content: string;
   lastUpdate: number;
   updateScheduled: boolean;
   typingInterval: NodeJS.Timeout | null;
+  // Terminal UI mode additions
+  terminalMode: boolean;
+  spinnerIndex: number;
+  spinnerInterval: NodeJS.Timeout | null;
+  currentOperation: ToolOperation | null;
+  backgroundTasks: Array<{ name: string; status: 'running' | 'complete' | 'error' }>;
 }
 
 const TYPING_INTERVAL_MS = 4000; // Send typing every 4 seconds
+const SPINNER_INTERVAL_MS = 150; // Spinner animation speed
 
 export class MessageSender {
   private streamStates: Map<number, StreamState> = new Map();
@@ -143,18 +164,62 @@ export class MessageSender {
     const chatId = ctx.chat?.id;
     if (!chatId) return;
 
-    const message = await ctx.reply('▌', { parse_mode: undefined });
+    const terminalMode = isTerminalUIEnabled(chatId);
+    const initialText = terminalMode ? `${getSpinnerFrame(0)} ${TOOL_ICONS.thinking} Thinking...` : '▌';
+    const message = await ctx.reply(initialText, { parse_mode: undefined });
 
     // Start continuous typing indicator
     const typingInterval = this.startTypingIndicator(ctx.api, chatId);
 
-    this.streamStates.set(chatId, {
+    const state: StreamState = {
+      chatId,
       messageId: message.message_id,
       content: '',
       lastUpdate: Date.now(),
       updateScheduled: false,
       typingInterval,
-    });
+      // Terminal UI mode
+      terminalMode,
+      spinnerIndex: 0,
+      spinnerInterval: null,
+      currentOperation: null,
+      backgroundTasks: [],
+    };
+
+    // Start spinner animation if terminal mode
+    if (terminalMode) {
+      state.spinnerInterval = this.startSpinnerAnimation(ctx, chatId, state);
+    }
+
+    this.streamStates.set(chatId, state);
+  }
+
+  private startSpinnerAnimation(ctx: Context, chatId: number, state: StreamState): NodeJS.Timeout {
+    return setInterval(() => {
+      // Check if state is still active (not cleaned up)
+      const currentState = this.streamStates.get(chatId);
+      if (!currentState || currentState !== state || !state.messageId) {
+        // State was cleaned up, stop the interval
+        if (state.spinnerInterval) {
+          clearInterval(state.spinnerInterval);
+          state.spinnerInterval = null;
+        }
+        return;
+      }
+
+      state.spinnerIndex = (state.spinnerIndex + 1) % 10;
+      // Trigger a display update if we have a current operation
+      if (state.currentOperation) {
+        this.flushTerminalUpdate(ctx, state).catch(() => {});
+      }
+    }, SPINNER_INTERVAL_MS);
+  }
+
+  private stopSpinnerAnimation(state: StreamState): void {
+    if (state.spinnerInterval) {
+      clearInterval(state.spinnerInterval);
+      state.spinnerInterval = null;
+    }
   }
 
   private startTypingIndicator(api: Api, chatId: number): NodeJS.Timeout {
@@ -172,6 +237,122 @@ export class MessageSender {
       clearInterval(state.typingInterval);
       state.typingInterval = null;
     }
+  }
+
+  /**
+   * Update the current tool operation (terminal UI mode)
+   */
+  updateToolOperation(chatId: number, toolName: string, input?: Record<string, unknown>): void {
+    const state = this.streamStates.get(chatId);
+    if (!state || !state.terminalMode) return;
+
+    const detail = input ? extractToolDetail(toolName, input) : undefined;
+    state.currentOperation = { name: toolName, detail };
+  }
+
+  /**
+   * Clear the current tool operation (terminal UI mode)
+   */
+  clearToolOperation(chatId: number): void {
+    const state = this.streamStates.get(chatId);
+    if (!state) return;
+    state.currentOperation = null;
+  }
+
+  /**
+   * Add or update a background task status (terminal UI mode)
+   */
+  updateBackgroundTask(chatId: number, taskName: string, status: 'running' | 'complete' | 'error'): void {
+    const state = this.streamStates.get(chatId);
+    if (!state || !state.terminalMode) return;
+
+    const existing = state.backgroundTasks.find(t => t.name === taskName);
+    if (existing) {
+      existing.status = status;
+    } else {
+      state.backgroundTasks.push({ name: taskName, status });
+    }
+  }
+
+  private async flushTerminalUpdate(ctx: Context, state: StreamState): Promise<void> {
+    // Verify state is still active
+    const currentState = this.streamStates.get(state.chatId);
+    if (!currentState || currentState !== state || !state.messageId || !state.terminalMode) {
+      return;
+    }
+
+    const parts: string[] = [];
+
+    // Add status line if there's a current operation
+    if (state.currentOperation) {
+      const icon = getToolIcon(state.currentOperation.name);
+      const action = this.getToolAction(state.currentOperation.name);
+      const detail = state.currentOperation.detail ? ` ${state.currentOperation.detail}` : '';
+      parts.push(renderStatusLine(state.spinnerIndex, icon, action, detail ? detail.trim() : undefined));
+      if (state.content) parts.push('');
+    }
+
+    // Add content (truncated)
+    if (state.content) {
+      const maxContentLen = config.MAX_MESSAGE_LENGTH - 200; // Reserve space for status
+      const truncatedContent = state.content.length > maxContentLen
+        ? state.content.substring(0, maxContentLen) + '...'
+        : state.content;
+      parts.push(truncatedContent);
+    }
+
+    // Add background tasks
+    if (state.backgroundTasks.length > 0) {
+      if (state.content || state.currentOperation) parts.push('');
+      for (const task of state.backgroundTasks) {
+        const statusIcon = task.status === 'complete' ? TOOL_ICONS.complete
+          : task.status === 'error' ? TOOL_ICONS.error
+          : getSpinnerFrame(state.spinnerIndex);
+        parts.push(`${TOOL_ICONS.Task} ${task.name} ${statusIcon}`);
+      }
+    }
+
+    // If nothing to show, show thinking indicator
+    if (parts.length === 0) {
+      parts.push(`${getSpinnerFrame(state.spinnerIndex)} ${TOOL_ICONS.thinking} Thinking...`);
+    }
+
+    const displayContent = parts.join('\n');
+
+    try {
+      await ctx.api.editMessageText(
+        state.chatId,
+        state.messageId,
+        displayContent,
+        { parse_mode: undefined }
+      );
+      state.lastUpdate = Date.now();
+    } catch (error: unknown) {
+      // Ignore "message not modified" and "message ID invalid" errors
+      // The latter happens when streaming ends and message is replaced
+      if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        if (!msg.includes('message is not modified') && !msg.includes('message_id_invalid')) {
+          console.error('Error updating terminal stream:', error);
+        }
+      }
+    }
+  }
+
+  private getToolAction(toolName: string): string {
+    const actions: Record<string, string> = {
+      Read: 'Reading',
+      Write: 'Writing',
+      Edit: 'Editing',
+      Bash: 'Running',
+      Grep: 'Searching',
+      Glob: 'Finding files',
+      Task: 'Running task',
+      WebFetch: 'Fetching',
+      WebSearch: 'Searching web',
+      NotebookEdit: 'Editing notebook',
+    };
+    return actions[toolName] || toolName;
   }
 
   async updateStream(ctx: Context, content: string): Promise<void> {
@@ -201,6 +382,12 @@ export class MessageSender {
   private async flushUpdate(ctx: Context, state: StreamState): Promise<void> {
     if (!state.messageId) return;
 
+    // Use terminal-style update if enabled
+    if (state.terminalMode) {
+      await this.flushTerminalUpdate(ctx, state);
+      return;
+    }
+
     // For streaming updates, keep it simple - just show truncated content with cursor
     // Don't convert to MarkdownV2 during streaming to avoid parsing errors mid-message
     const displayContent = state.content.length > 0
@@ -209,16 +396,19 @@ export class MessageSender {
 
     try {
       await ctx.api.editMessageText(
-        ctx.chat!.id,
+        state.chatId,
         state.messageId,
         displayContent,
         { parse_mode: undefined } // Plain text during streaming for stability
       );
       state.lastUpdate = Date.now();
     } catch (error: unknown) {
-      // Ignore "message not modified" errors
-      if (error instanceof Error && !error.message.includes('message is not modified')) {
-        console.error('Error updating stream:', error);
+      // Ignore "message not modified" and "message ID invalid" errors
+      if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        if (!msg.includes('message is not modified') && !msg.includes('message_id_invalid')) {
+          console.error('Error updating stream:', error);
+        }
       }
     }
   }
@@ -230,8 +420,10 @@ export class MessageSender {
     const state = this.streamStates.get(chatId);
 
     if (state) {
-      // Stop typing indicator
+      // Stop typing indicator and spinner
       this.stopTypingIndicator(state);
+      this.stopSpinnerAnimation(state);
+      state.currentOperation = null;
 
       if (state.messageId) {
         // Check if we should use Telegraph for final content
@@ -310,8 +502,9 @@ export class MessageSender {
 
     const state = this.streamStates.get(chatId);
     if (state) {
-      // Stop typing indicator
+      // Stop typing indicator and spinner
       this.stopTypingIndicator(state);
+      this.stopSpinnerAnimation(state);
 
       if (state.messageId) {
         try {

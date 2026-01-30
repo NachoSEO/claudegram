@@ -1,5 +1,4 @@
 import { Context } from 'grammy';
-import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { config } from '../../config.js';
@@ -14,15 +13,14 @@ import {
   getQueuePosition,
   setAbortController,
 } from '../../claude/request-queue.js';
-import { escapeMarkdownV2 } from '../../telegram/markdown.js';
+import { escapeMarkdownV2 as esc } from '../../telegram/markdown.js';
 import { getStreamingMode } from './command.handler.js';
+import { downloadFileSecure, getTelegramFileUrl } from '../../utils/download.js';
+import { sanitizeError } from '../../utils/sanitize.js';
+import { isValidImageFile, getFileType } from '../../utils/file-type.js';
 import { type PhotoSize } from 'grammy/types';
 
 const UPLOADS_DIR = '.claudegram/uploads';
-
-function esc(text: string): string {
-  return escapeMarkdownV2(text);
-}
 
 function sanitizeFileName(name: string): string {
   return path.basename(name).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -48,32 +46,8 @@ async function downloadTelegramFile(ctx: Context, fileId: string, destPath: stri
     throw new Error('Telegram did not provide file_path for this image.');
   }
 
-  const fileUrl = `https://api.telegram.org/file/bot${config.TELEGRAM_BOT_TOKEN}/${file.file_path}`;
-
-  await new Promise<void>((resolve, reject) => {
-    execFile(
-      'curl',
-      [
-        '-sS',
-        '-f',
-        '--connect-timeout', '10',
-        '--max-time', '30',
-        '--retry', '2',
-        '--retry-delay', '2',
-        '-o', destPath,
-        fileUrl,
-      ],
-      { timeout: 60_000 },
-      (error, _stdout, stderr) => {
-        if (error) {
-          const msg = (stderr || '').trim() || error.message;
-          reject(new Error(`Failed to download image: ${msg}`));
-          return;
-        }
-        resolve();
-      }
-    );
-  });
+  const fileUrl = getTelegramFileUrl(config.TELEGRAM_BOT_TOKEN, file.file_path);
+  await downloadFileSecure(fileUrl, destPath);
 
   return file.file_path;
 }
@@ -186,7 +160,16 @@ export async function handlePhoto(ctx: Context): Promise<void> {
 
   try {
     const filePath = await downloadTelegramFile(ctx, largest.file_id, destPath);
-    const ext = path.extname(filePath) || '.jpg';
+
+    // Validate file content via magic bytes (defense against spoofed MIME types)
+    if (!isValidImageFile(destPath)) {
+      fs.unlinkSync(destPath);
+      throw new Error('Downloaded file is not a valid image.');
+    }
+
+    // Get actual file type from magic bytes instead of trusting extension
+    const actualType = getFileType(destPath);
+    const ext = actualType?.extension || path.extname(filePath) || '.jpg';
     const finalPath = ext && ext !== '.jpg'
       ? destPath.replace(/\.jpg$/, ext)
       : destPath;
@@ -203,7 +186,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     await handleSavedImage(ctx, finalPath, ctx.message?.caption);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Photo] Error:', error);
+    console.error('[Photo] Error:', sanitizeError(error));
     await ctx.reply(`❌ Image error: ${esc(errorMessage)}`, { parse_mode: 'MarkdownV2' });
   }
 }
@@ -262,6 +245,12 @@ export async function handleImageDocument(ctx: Context): Promise<void> {
   try {
     await downloadTelegramFile(ctx, document.file_id, destPath);
 
+    // Validate file content via magic bytes (defense against spoofed MIME types)
+    if (!isValidImageFile(destPath)) {
+      fs.unlinkSync(destPath);
+      throw new Error('Downloaded file is not a valid image.');
+    }
+
     const buffer = fs.readFileSync(destPath);
     if (!buffer.length) {
       throw new Error('Downloaded image is empty.');
@@ -270,7 +259,7 @@ export async function handleImageDocument(ctx: Context): Promise<void> {
     await handleSavedImage(ctx, destPath, ctx.message?.caption);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[ImageDoc] Error:', error);
+    console.error('[ImageDoc] Error:', sanitizeError(error));
     await ctx.reply(`❌ Image error: ${esc(errorMessage)}`, { parse_mode: 'MarkdownV2' });
   }
 }

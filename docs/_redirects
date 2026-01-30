@@ -1,0 +1,5 @@
+# Redirect www to apex
+https://www.claudegram.com/* https://claudegram.com/:splat 301
+
+# Redirect pages.dev to custom domain
+https://claudegram.pages.dev/* https://claudegram.com/:splat 301
