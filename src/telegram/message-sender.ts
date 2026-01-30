@@ -207,7 +207,7 @@ export class MessageSender {
         return;
       }
 
-      state.spinnerIndex = (state.spinnerIndex + 1) % 10;
+      state.spinnerIndex = state.spinnerIndex + 1;
       // Trigger a display update if we have a current operation
       if (state.currentOperation || state.backgroundTasks.length > 0) {
         this.flushTerminalUpdate(ctx, state).catch(() => {});

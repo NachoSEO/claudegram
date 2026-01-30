@@ -72,6 +72,8 @@ export function detectPlatform(url: string): Platform {
  */
 function isPrivateHost(hostname: string): boolean {
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
+  const lower = hostname.toLowerCase();
+  if (lower.startsWith('fc') || lower.startsWith('fd') || lower.startsWith('fe80:')) return true;
   const parts = hostname.split('.').map(Number);
   if (parts.length === 4 && parts.every(n => !isNaN(n))) {
     const [a, b] = parts;
@@ -80,6 +82,7 @@ function isPrivateHost(hostname: string): boolean {
     if (a === 192 && b === 168) return true;
     if (a === 127) return true;
     if (a === 0) return true;
+    if (a === 169 && b === 254) return true;
   }
   return hostname.endsWith('.local') || hostname.endsWith('.internal');
 }

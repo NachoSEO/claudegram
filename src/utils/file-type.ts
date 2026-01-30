@@ -52,16 +52,16 @@ function isWebP(buffer: Buffer): boolean {
 }
 
 /**
- * Check for HEIC/HEIF by verifying the ISO BMFF ftyp box structure.
- * Bytes 4-7 must be "ftyp", and the brand at bytes 8-11 must be a known HEIC brand.
+ * Detect HEIF container brand from ISO BMFF ftyp box.
+ * Returns 'heic' for HEVC-based brands, 'heif' for generic HEIF brands, or null.
  */
-function isHEIC(buffer: Buffer): boolean {
-  if (buffer.length < 12) return false;
-  // Bytes 4-7: "ftyp"
-  if (buffer[4] !== 0x66 || buffer[5] !== 0x74 || buffer[6] !== 0x79 || buffer[7] !== 0x70) return false;
-  // Bytes 8-11: brand (heic, heix, mif1, msf1)
+function getHeifBrand(buffer: Buffer): 'heic' | 'heif' | null {
+  if (buffer.length < 12) return null;
+  if (buffer[4] !== 0x66 || buffer[5] !== 0x74 || buffer[6] !== 0x79 || buffer[7] !== 0x70) return null;
   const brand = buffer.slice(8, 12).toString('ascii');
-  return ['heic', 'heix', 'mif1', 'msf1'].includes(brand);
+  if (['heic', 'heix', 'hevc', 'hevx'].includes(brand)) return 'heic';
+  if (['mif1', 'msf1', 'heif'].includes(brand)) return 'heif';
+  return null;
 }
 
 /**
@@ -84,9 +84,13 @@ export function detectImageType(buffer: Buffer): FileTypeResult | null {
     return { extension: '.webp', mimeType: 'image/webp' };
   }
 
-  // Check HEIC (proper ftyp box validation)
-  if (isHEIC(buffer)) {
+  // Check HEIC/HEIF (proper ftyp box validation)
+  const heifBrand = getHeifBrand(buffer);
+  if (heifBrand === 'heic') {
     return { extension: '.heic', mimeType: 'image/heic' };
+  }
+  if (heifBrand === 'heif') {
+    return { extension: '.heif', mimeType: 'image/heif' };
   }
 
   // Check BMP with reserved-byte validation (avoids 2-byte false positives)
