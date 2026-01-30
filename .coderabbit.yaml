@@ -7,6 +7,13 @@ tone_instructions: "Be direct and technical. Focus on security, correctness, and
 reviews:
   profile: "assertive"
 
+  # Disable auto-review on push — we trigger reviews manually via CLI
+  # (`/coderabbit:review` or `coderabbit review`). This prevents double reviews
+  # (CLI + GitHub bot) and avoids rate limiting.
+  auto_review:
+    enabled: false
+    drafts: false
+
   # Exclude local-only files and generated output from review
   path_filters:
     - "!CLAUDE.md"
