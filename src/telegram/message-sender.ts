@@ -70,15 +70,11 @@ export class MessageSender {
       try {
         await ctx.reply(part, { parse_mode: 'MarkdownV2' });
       } catch (error) {
-        // If MarkdownV2 fails, try with escaped plain text
-        console.error('MarkdownV2 send failed, trying escaped fallback:', error);
-        try {
-          await ctx.reply(escapeMarkdownV2(text), { parse_mode: 'MarkdownV2' });
-        } catch (fallbackError) {
-          // Last resort: send as plain text
-          console.error('Fallback also failed, sending plain text:', fallbackError);
-          await ctx.reply(text, { parse_mode: undefined });
-        }
+        // MarkdownV2 failed — send as plain text immediately (no point retrying broken markup)
+        console.error('MarkdownV2 send failed, falling back to plain text:', error);
+        await ctx.reply(text, { parse_mode: undefined });
+        // Already sent full text as plain — skip remaining MarkdownV2 parts
+        return;
       }
     }
   }
@@ -480,16 +476,22 @@ export class MessageSender {
               await new Promise(resolve => setTimeout(resolve, 100));
             }
           } catch (mdError) {
-            // MarkdownV2 failed — delete streaming placeholder and
-            // re-send via sendMessage which handles Telegraph + chunking
-            console.error('MarkdownV2 edit failed, falling back to sendMessage:', mdError);
-            try {
-              await ctx.api.deleteMessage(chatId, state.messageId);
-            } catch { /* ignore */ }
+            // "message is not modified" means the content already matches — treat as success
+            const errMsg = mdError instanceof Error ? mdError.message : '';
+            if (errMsg.includes('message is not modified')) {
+              console.debug('[Stream] Edit skipped — content unchanged');
+            } else {
+              // MarkdownV2 failed — delete streaming placeholder and
+              // re-send via sendMessage which handles Telegraph + chunking
+              console.error('MarkdownV2 edit failed, falling back to sendMessage:', mdError);
+              try {
+                await ctx.api.deleteMessage(chatId, state.messageId);
+              } catch { /* ignore */ }
 
-            this.streamStates.delete(chatId);
-            await this.sendMessage(ctx, finalContent);
-            return;
+              this.streamStates.delete(chatId);
+              await this.sendMessage(ctx, finalContent);
+              return;
+            }
           }
         } catch (error) {
           console.error('Error finishing stream:', error);

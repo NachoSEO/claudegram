@@ -15,6 +15,7 @@ import {
   handleTTSCallback,
   handleBotStatus,
   handleRestartBot,
+  handleRestartCallback,
   handleContext,
   handlePing,
   handleCancel,
@@ -159,6 +160,8 @@ export async function createBot(): Promise<Bot> {
       await handleExtractCallback(ctx);
     } else if (data.startsWith('reddit_action:')) {
       await handleRedditActionCallback(ctx);
+    } else if (data.startsWith('restart:')) {
+      await handleRestartCallback(ctx);
     }
   });
 

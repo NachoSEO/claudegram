@@ -8,7 +8,11 @@ const MAX_MESSAGE_LENGTH = 4096;
  */
 export function convertToTelegramMarkdown(text: string): string {
   try {
-    return convert(text, 'escape');
+    // Pre-process: convert thematic breaks (---, ***, ___) to a unicode separator.
+    // The telegram-markdown-v2 library doesn't handle these and leaves *** intact,
+    // which Telegram then misinterprets as an unterminated bold/italic entity.
+    const preprocessed = text.replace(/^[ \t]*([\*\-_]){3,}[ \t]*$/gm, '———');
+    return convert(preprocessed, 'escape');
   } catch (error) {
     console.error('Markdown conversion error:', error);
     // Fallback: escape special characters manually
