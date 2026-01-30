@@ -124,23 +124,28 @@ function getToolAction(toolName: string): string {
  * Extract a meaningful detail from tool input for display
  */
 export function extractToolDetail(toolName: string, input: Record<string, unknown>): string | undefined {
+  const str = (key: string): string | undefined => {
+    const val = input[key];
+    return typeof val === 'string' ? val : undefined;
+  };
+
   switch (toolName) {
     case 'Read':
     case 'Write':
     case 'Edit':
     case 'NotebookEdit':
-      return truncatePath(input.file_path as string);
+      return truncatePath(str('file_path'));
     case 'Bash':
-      return truncateCommand(input.command as string);
+      return truncateCommand(str('command'));
     case 'Grep':
-      return input.pattern as string;
+      return str('pattern');
     case 'Glob':
-      return input.pattern as string;
+      return str('pattern');
     case 'WebFetch':
     case 'WebSearch':
-      return truncateUrl(input.url as string || input.query as string);
+      return truncateUrl(str('url') || str('query'));
     case 'Task':
-      return input.description as string;
+      return str('description');
     default:
       return undefined;
   }
@@ -156,6 +161,11 @@ function truncatePath(filePath: string | undefined, maxLen: number = 40): string
   // Keep the last part of the path
   const parts = filePath.split('/');
   let result = parts[parts.length - 1];
+
+  // Truncate filename itself if it exceeds maxLen
+  if (result.length > maxLen) {
+    return result.substring(0, maxLen - 3) + '...';
+  }
 
   // Add parent dirs if space allows
   for (let i = parts.length - 2; i >= 0; i--) {
@@ -195,13 +205,14 @@ function truncateUrl(url: string | undefined, maxLen: number = 40): string | und
  */
 export function renderBackgroundTask(
   name: string,
-  status: 'running' | 'complete' | 'error'
+  status: 'running' | 'complete' | 'error',
+  spinnerIndex: number = 0
 ): string {
   const statusIcon = status === 'complete'
     ? TOOL_ICONS.complete
     : status === 'error'
       ? TOOL_ICONS.error
-      : getSpinnerFrame(0);
+      : getSpinnerFrame(spinnerIndex);
   return `📋 Background: ${name} ${statusIcon}`;
 }
 
@@ -241,7 +252,7 @@ export function formatTerminalMessage(
   if (backgroundTasks.length > 0) {
     if (content) parts.push('');
     for (const task of backgroundTasks) {
-      parts.push(renderBackgroundTask(task.name, task.status));
+      parts.push(renderBackgroundTask(task.name, task.status, spinnerIndex));
     }
   }
 

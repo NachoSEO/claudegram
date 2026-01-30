@@ -12,8 +12,7 @@ const IMAGE_SIGNATURES: { bytes: number[]; extension: string; mimeType: string }
   { bytes: [0x47, 0x49, 0x46, 0x38, 0x37, 0x61], extension: '.gif', mimeType: 'image/gif' },
   // GIF89a
   { bytes: [0x47, 0x49, 0x46, 0x38, 0x39, 0x61], extension: '.gif', mimeType: 'image/gif' },
-  // BMP — check 6 bytes: "BM" magic + verify reserved bytes at offset 6-7 are zero
-  { bytes: [0x42, 0x4D], extension: '.bmp', mimeType: 'image/bmp' },
+  // NOTE: BMP is handled by dedicated isBMP() check, not in this array.
   // TIFF (little endian)
   { bytes: [0x49, 0x49, 0x2A, 0x00], extension: '.tiff', mimeType: 'image/tiff' },
   // TIFF (big endian)

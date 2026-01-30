@@ -27,15 +27,22 @@ export async function initTelegraph(): Promise<void> {
 
     if (fs.existsSync(accountFile)) {
       // Load existing account with schema validation
-      const raw = JSON.parse(fs.readFileSync(accountFile, 'utf-8'));
-      const result = telegraphAccountSchema.safeParse(raw);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(fs.readFileSync(accountFile, 'utf-8'));
+      } catch {
+        console.warn('[Telegraph] Malformed account file, creating new account');
+        raw = null;
+      }
+      const result = raw ? telegraphAccountSchema.safeParse(raw) : { success: false as const };
 
       if (result.success) {
         telegraphClient = new Telegraph(result.data.access_token);
         telegraphAccount = result.data;
         console.log('[Telegraph] Loaded existing account');
       } else {
-        console.warn('[Telegraph] Invalid account file, creating new account:', result.error.message);
+        const reason = 'error' in result ? result.error.message : 'malformed JSON';
+        console.warn('[Telegraph] Invalid account file, creating new account:', reason);
         // Fall through to create new account
       }
     }

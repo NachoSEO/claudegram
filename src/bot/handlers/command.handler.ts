@@ -1469,7 +1469,7 @@ export async function handleTeleport(ctx: Context): Promise<void> {
   }
 
   const projectName = path.basename(session.workingDirectory);
-  const claudeBin = config.CLAUDE_EXECUTABLE_PATH || 'claude';
+  const claudeBin = config.CLAUDE_EXECUTABLE_PATH ?? 'claude';
   const command = `cd "${session.workingDirectory}" && ${claudeBin} --resume ${session.claudeSessionId}`;
 
   const message = `🚀 *Teleport to Terminal*
@@ -2368,7 +2368,8 @@ const projectBrowserTimestamps = new Map<number, number>();
  * Runs every 60 seconds and removes stale entries.
  * .unref() so this timer doesn't prevent graceful process shutdown.
  */
-const _cleanupInterval = setInterval(() => {
+// Interval assigned to call .unref() for graceful shutdown
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
 
   // Clean pendingRedditResults (keyed by messageId, has expiresAt)
@@ -2399,7 +2400,7 @@ const _cleanupInterval = setInterval(() => {
     }
   }
 }, 60_000);
-_cleanupInterval.unref();
+cleanupInterval.unref();
 
 export async function handleExtract(ctx: Context): Promise<void> {
   const text = ctx.message?.text || '';

@@ -162,8 +162,14 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     const filePath = await downloadTelegramFile(ctx, largest.file_id, destPath);
 
     // Validate file content via magic bytes (defense against spoofed MIME types)
-    if (!isValidImageFile(destPath)) {
-      fs.unlinkSync(destPath);
+    let isValid = false;
+    try {
+      isValid = isValidImageFile(destPath);
+    } catch {
+      // Validation threw — treat as invalid
+    }
+    if (!isValid) {
+      if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
       throw new Error('Downloaded file is not a valid image.');
     }
 
@@ -247,8 +253,14 @@ export async function handleImageDocument(ctx: Context): Promise<void> {
     await downloadTelegramFile(ctx, document.file_id, destPath);
 
     // Validate file content via magic bytes (defense against spoofed MIME types)
-    if (!isValidImageFile(destPath)) {
-      fs.unlinkSync(destPath);
+    let isValid = false;
+    try {
+      isValid = isValidImageFile(destPath);
+    } catch {
+      // Validation threw — treat as invalid
+    }
+    if (!isValid) {
+      if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
       throw new Error('Downloaded file is not a valid image.');
     }
 

@@ -26,6 +26,10 @@ export function downloadFileSecure(fileUrl: string, destPath: string): Promise<v
     const child = spawn('curl', curlArgs, { timeout: 60_000 });
     let stderr = '';
 
+    child.stdin.on('error', (err) => {
+      reject(new Error(`Failed to write to curl stdin: ${err.message}`));
+    });
+
     child.stderr.on('data', (data) => {
       stderr += data.toString();
     });

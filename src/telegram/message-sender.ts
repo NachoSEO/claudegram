@@ -294,7 +294,8 @@ export class MessageSender {
 
     // Add content (truncated)
     if (state.content) {
-      const maxContentLen = config.MAX_MESSAGE_LENGTH - 200; // Reserve space for status
+      const TERMINAL_STATUS_RESERVE_CHARS = 200;
+      const maxContentLen = config.MAX_MESSAGE_LENGTH - TERMINAL_STATUS_RESERVE_CHARS;
       const truncatedContent = state.content.length > maxContentLen
         ? state.content.substring(0, maxContentLen) + '...'
         : state.content;
