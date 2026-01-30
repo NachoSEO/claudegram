@@ -27,6 +27,7 @@ import { getTTSSettings, setTTSEnabled, setTTSVoice, setTTSAutoplay } from '../.
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
 import { executeVReddit } from '../../reddit/vreddit.js';
+import { redditFetch, redditFetchBoth, type RedditFetchOptions } from '../../reddit/redditfetch.js';
 import { fmtTokens, getProgressBar } from './message.handler.js';
 import {
   detectPlatform,
@@ -52,6 +53,31 @@ async function replyMd(ctx: Context, text: string): Promise<void> {
 // Escape dynamic text for MarkdownV2
 function esc(text: string): string {
   return escapeMarkdownV2(text);
+}
+
+/** Build status lines appended to project confirmation messages. */
+export function projectStatusSuffix(chatId: number): string {
+  const model = getModel(chatId);
+  const dangerous = isDangerousMode() ? '⚠️ ENABLED' : 'Disabled';
+  const session = sessionManager.getSession(chatId);
+  const created = session?.createdAt
+    ? new Date(session.createdAt).toLocaleString()
+    : new Date().toLocaleString();
+  const sessionId = session?.claudeSessionId;
+
+  let suffix = `\n• *Model:* ${esc(model)}\n• *Created:* ${esc(created)}\n• *Dangerous Mode:* ${esc(dangerous)}`;
+  if (sessionId) {
+    suffix += `\n• *Session ID:* \`${esc(sessionId)}\``;
+    suffix += `\n\n💡 To continue this session from the terminal, copy the command below\\.`;
+  } else {
+    suffix += `\n• *Session ID:* _pending — send a message to start_`;
+  }
+  return suffix;
+}
+
+/** The copyable command sent as a separate message. */
+export function resumeCommandMessage(sessionId: string): string {
+  return `\`claude --resume ${sessionId}\``;
 }
 
 const OPENAI_TTS_VOICES = [
@@ -92,7 +118,9 @@ function runBotCtl(args: string[]): Promise<{ stdout: string; stderr: string }> 
       args,
       { cwd: PROJECT_ROOT, env: { ...process.env, MODE: config.BOT_MODE } },
       (error, stdout, stderr) => {
-        if (error) {
+        // Resolve with stdout even on non-zero exit codes (e.g. "status"
+        // returns exit 1 when the bot isn't running, which is valid output)
+        if (error && !stdout) {
           reject(new Error((stderr || error.message).trim()));
           return;
         }
@@ -349,9 +377,14 @@ export async function handleProjectCallback(ctx: Context): Promise<void> {
 
     await ctx.answerCallbackQuery({ text: 'Project set' });
     await ctx.editMessageText(
-      `✅ Project: *${esc(path.basename(state.current))}*\n\nYou can now chat with Claude about this project\\!`,
+      `✅ Project: *${esc(path.basename(state.current))}*\n\nYou can now chat with Claude about this project\\!${projectStatusSuffix(chatId)}`,
       { parse_mode: 'MarkdownV2' }
     );
+
+    const s = sessionManager.getSession(chatId);
+    if (s?.claudeSessionId) {
+      await replyMd(ctx, resumeCommandMessage(s.claudeSessionId));
+    }
     return;
   }
 
@@ -600,7 +633,12 @@ export async function handleProject(ctx: Context): Promise<void> {
   sessionManager.setWorkingDirectory(chatId, projectPath);
   clearConversation(chatId);
 
-  await replyMd(ctx, `✅ Project: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!`);
+  await replyMd(ctx, `✅ Project: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!${projectStatusSuffix(chatId)}`);
+
+  const s = sessionManager.getSession(chatId);
+  if (s?.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(s.claudeSessionId));
+  }
 }
 
 export async function handleNewProject(ctx: Context): Promise<void> {
@@ -631,7 +669,12 @@ export async function handleNewProject(ctx: Context): Promise<void> {
   sessionManager.setWorkingDirectory(chatId, projectPath);
   clearConversation(chatId);
 
-  await replyMd(ctx, `✅ Created and opened: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!`);
+  await replyMd(ctx, `✅ Created and opened: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!${projectStatusSuffix(chatId)}`);
+
+  const s = sessionManager.getSession(chatId);
+  if (s?.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(s.claudeSessionId));
+  }
 }
 
 function listProjects(): string[] {
@@ -891,7 +934,7 @@ export async function handleContext(ctx: Context): Promise<void> {
   const cached = getCachedUsage(chatId);
   if (cached) {
     const pct = cached.contextWindow > 0
-      ? Math.round(((cached.inputTokens + cached.outputTokens) / cached.contextWindow) * 100)
+      ? Math.round(((cached.inputTokens + cached.outputTokens + cached.cacheReadTokens) / cached.contextWindow) * 100)
       : 0;
     const bar = getProgressBar(pct);
 
@@ -942,19 +985,33 @@ export async function handleContext(ctx: Context): Promise<void> {
 }
 
 export async function handleBotStatus(ctx: Context): Promise<void> {
-  if (!botctlExists()) {
-    await replyMd(ctx, '❌ Bot control script not found\\.\n\nExpected at `scripts/claudegram-botctl.sh`\\.');
-    return;
-  }
+  const uptimeSec = process.uptime();
+  const hours = Math.floor(uptimeSec / 3600);
+  const minutes = Math.floor((uptimeSec % 3600) / 60);
+  const seconds = Math.floor(uptimeSec % 60);
+  const uptimeStr = hours > 0
+    ? `${hours}h ${minutes}m ${seconds}s`
+    : minutes > 0
+      ? `${minutes}m ${seconds}s`
+      : `${seconds}s`;
 
-  try {
-    const { stdout, stderr } = await runBotCtl(['status']);
-    const output = (stdout || stderr || 'No output').trim();
-    await ctx.reply(`Bot status (${config.BOT_MODE}):\\n${output}`, { parse_mode: undefined });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    await ctx.reply(`Bot status error (${config.BOT_MODE}):\\n${errorMessage}`, { parse_mode: undefined });
-  }
+  const mode = config.BOT_MODE === 'prod' ? 'Production' : 'Development';
+  const chatId = ctx.chat?.id;
+  const model = chatId ? getModel(chatId) : 'opus';
+  const streaming = config.STREAMING_MODE || 'streaming';
+  const pid = process.pid;
+  const memMB = (process.memoryUsage.rss() / 1024 / 1024).toFixed(1);
+
+  const msg =
+    `🟢 *${esc(config.BOT_NAME)} is running*\n\n` +
+    `*Mode:* ${esc(mode)}\n` +
+    `*Uptime:* ${esc(uptimeStr)}\n` +
+    `*PID:* ${pid}\n` +
+    `*Memory:* ${esc(memMB)} MB\n` +
+    `*Model:* ${esc(model)}\n` +
+    `*Streaming:* ${esc(streaming)}`;
+
+  await replyMd(ctx, msg);
 }
 
 export async function handleRestartBot(ctx: Context): Promise<void> {
@@ -1187,14 +1244,16 @@ export async function handleResume(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 
-  const history = sessionManager.getSessionHistory(chatId, 5);
+  const history = sessionManager.getSessionHistory(chatId, 10);
+  // Only show sessions that actually have a Claude session (were chatted in)
+  const resumable = history.filter((entry) => entry.claudeSessionId);
 
-  if (history.length === 0) {
-    await replyMd(ctx, 'ℹ️ No session history found\\.\n\nUse `/project <name>` to start a new session\\.');
+  if (resumable.length === 0) {
+    await replyMd(ctx, 'ℹ️ No resumable sessions found\\.\n\nSessions need at least one Claude response to be resumable\\.\nUse `/project <name>` to start a new session\\.');
     return;
   }
 
-  const keyboard = history.map((entry) => {
+  const keyboard = resumable.map((entry) => {
     const date = new Date(entry.lastActivity);
     const timeAgo = formatTimeAgo(date);
 
@@ -1234,9 +1293,14 @@ export async function handleResumeCallback(ctx: Context): Promise<void> {
   await ctx.answerCallbackQuery({ text: 'Session resumed!' });
   await ctx.editMessageText(
     `✅ Resumed session for *${esc(path.basename(session.workingDirectory))}*\n\n` +
-    `Working directory: \`${esc(session.workingDirectory)}\``,
+    `Working directory: \`${esc(session.workingDirectory)}\`${projectStatusSuffix(chatId)}`,
     { parse_mode: 'MarkdownV2' }
   );
+
+  // Send session ID as separate message for easy copying
+  if (session.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(session.claudeSessionId));
+  }
 }
 
 export async function handleContinue(ctx: Context): Promise<void> {
@@ -1254,8 +1318,13 @@ export async function handleContinue(ctx: Context): Promise<void> {
 
   await replyMd(ctx,
     `✅ Continuing *${esc(path.basename(session.workingDirectory))}*\n\n` +
-    `Working directory: \`${esc(session.workingDirectory)}\``
+    `Working directory: \`${esc(session.workingDirectory)}\`${projectStatusSuffix(chatId)}`
   );
+
+  // Send session ID as separate message for easy copying
+  if (session.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(session.claudeSessionId));
+  }
 }
 
 export async function handleLoop(ctx: Context): Promise<void> {
@@ -1559,35 +1628,22 @@ function ensureMediumOutputDir(ctx: Context, url: string): string {
 }
 
 
-async function runRedditFetch(
-  ctx: Context,
-  scriptPath: string,
-  tokens: string[]
-): Promise<{ stdout: string; stderr: string }> {
-  const scriptDir = path.dirname(scriptPath);
-
-  return new Promise((resolve, reject) => {
-    execFile(
-      'python3',
-      [scriptPath, ...tokens],
-      {
-        timeout: config.REDDITFETCH_TIMEOUT_MS,
-        maxBuffer: 10 * 1024 * 1024, // 10 MB
-        cwd: scriptDir,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          reject({ error, stdout: stdout || '', stderr: stderr || '' });
-          return;
-        }
-        resolve({ stdout: stdout || '', stderr: stderr || '' });
-      }
-    );
-  });
-}
+// Pending Reddit fetch results keyed by chatId, with 5-min TTL
+const pendingRedditResults = new Map<number, {
+  output: string;
+  jsonOutput: string;
+  targets: string[];
+  options: RedditFetchOptions;
+  format: RedditFormat | null;
+  hadOutputFlag: boolean;
+  messageId: number;
+  expiresAt: number;
+}>();
+const REDDIT_RESULT_TTL_MS = 5 * 60 * 1000;
 
 /**
- * Execute redditfetch.py and send the result to the user.
+ * Execute native Reddit fetch, cache the result, and show an inline picker
+ * so the user can choose File / Chat / Both.
  * Exported so message.handler.ts can reuse it for ForceReply flow.
  */
 export async function executeRedditFetch(
@@ -1599,84 +1655,270 @@ export async function executeRedditFetch(
   const tokens = tokenizeArgs(args);
   const { cleanTokens, format, hadOutputFlag } = parseRedditArgs(tokens);
 
-  // Inject default --limit if not provided
-  if (!cleanTokens.includes('--limit') && !cleanTokens.includes('-l')) {
-    cleanTokens.push('--limit', String(config.REDDITFETCH_DEFAULT_LIMIT));
+  // Extract targets and options from cleanTokens
+  const targets: string[] = [];
+  const options: RedditFetchOptions = {
+    format: format || 'markdown',
+    limit: config.REDDITFETCH_DEFAULT_LIMIT,
+    depth: config.REDDITFETCH_DEFAULT_DEPTH,
+  };
+
+  for (let i = 0; i < cleanTokens.length; i++) {
+    const token = cleanTokens[i];
+    if (token === '--sort' && cleanTokens[i + 1]) {
+      options.sort = cleanTokens[++i];
+    } else if (token === '--limit' && cleanTokens[i + 1]) {
+      const parsed = parseInt(cleanTokens[++i], 10);
+      if (!Number.isNaN(parsed) && parsed > 0) options.limit = parsed;
+    } else if ((token === '-l') && cleanTokens[i + 1]) {
+      const parsed = parseInt(cleanTokens[++i], 10);
+      if (!Number.isNaN(parsed) && parsed > 0) options.limit = parsed;
+    } else if (token === '--depth' && cleanTokens[i + 1]) {
+      const parsed = parseInt(cleanTokens[++i], 10);
+      if (!Number.isNaN(parsed) && parsed > 0) options.depth = parsed;
+    } else if (token === '--time' && cleanTokens[i + 1]) {
+      options.timeFilter = cleanTokens[++i];
+    } else if (token === '-f' || token === '--format') {
+      // Already captured by parseRedditArgs, skip value
+      i++;
+    } else {
+      targets.push(token);
+    }
   }
 
-  // Inject default --depth if not provided
-  if (!cleanTokens.includes('--depth')) {
-    cleanTokens.push('--depth', String(config.REDDITFETCH_DEFAULT_DEPTH));
+  if (targets.length === 0) {
+    await replyMd(ctx, '❌ No target specified\\. Example: `/reddit r/ClaudeAI` or `/reddit <post\\-url>`');
+    return;
   }
 
-  const scriptPath = config.REDDITFETCH_PATH;
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
   try {
-    const { stdout, stderr } = await runRedditFetch(ctx, scriptPath, cleanTokens);
-    const output = stdout.trim();
+    // Fetch both formats in a single API call to avoid double-dipping
+    const { markdown: output, json: jsonOutput } = await redditFetchBoth(targets, options);
 
-    if (!output) {
-      const hint = (stderr || '').trim();
-      const errorInfo = hint ? `\n\n_${esc(hint.substring(0, 200))}_` : '';
-      await replyMd(ctx, `❌ No results returned\\.${errorInfo}`);
+    if (!output.trim()) {
+      await replyMd(ctx, '❌ No results returned\\.');
       return;
     }
 
-    if (!format && output.length > config.REDDITFETCH_JSON_THRESHOLD_CHARS) {
-      const outputPath = buildRedditOutputPath(ctx, cleanTokens);
-      const jsonTokens = [...cleanTokens, '--format', 'json', '--output', outputPath];
+    // Build a short preview for the picker message
+    const charCount = output.length;
+    const targetLabel = targets.join(', ');
+    const previewSnippet = output.length > 200
+      ? output.slice(0, 200).trimEnd() + '...'
+      : output;
 
-      try {
-        await runRedditFetch(ctx, scriptPath, jsonTokens);
+    const previewText =
+      `📡 *Reddit Fetch*\n` +
+      `Target: \`${esc(targetLabel)}\`\n` +
+      `Size: _${charCount} chars_\n\n` +
+      `${esc(previewSnippet)}\n\n` +
+      `_Choose how to consume this content:_`;
 
-        const sent = await messageSender.sendDocument(
-          ctx,
-          outputPath,
-          `📎 Reddit JSON saved: ${path.basename(outputPath)}`
-        );
+    const msg = await ctx.reply(previewText, {
+      parse_mode: 'MarkdownV2',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '📄 File', callback_data: 'reddit_action:file' },
+            { text: '💬 Chat', callback_data: 'reddit_action:chat' },
+            { text: '📄💬 Both', callback_data: 'reddit_action:both' },
+          ],
+        ],
+      },
+    });
 
-        const notice = sent
-          ? `Large thread detected \\(${output.length} chars\\) — sent JSON file for structured review\\.`
-          : `Large thread detected \\(${output.length} chars\\) — JSON saved at \`${esc(outputPath)}\`\\.`;
-
-        await replyMd(ctx, notice);
-      } catch (jsonError) {
-        console.error('[Reddit] JSON fallback failed:', jsonError);
-        await messageSender.sendMessage(ctx, output);
-      }
-
-      return;
-    }
-
-    await messageSender.sendMessage(ctx, output);
-
-    if (hadOutputFlag) {
-      await replyMd(ctx, 'ℹ️ Note: `-o/--output` is ignored in chat mode\\. I can save JSON automatically for large threads\\.');
-    }
+    // Cache both formats for callback handling
+    pendingRedditResults.set(chatId, {
+      output,
+      jsonOutput,
+      targets,
+      options,
+      format,
+      hadOutputFlag,
+      messageId: msg.message_id,
+      expiresAt: Date.now() + REDDIT_RESULT_TTL_MS,
+    });
   } catch (err: unknown) {
-    const error = err as { error?: Error; stderr?: string };
-    const stderrText = (error?.stderr || '').trim();
+    const errorMessage = err instanceof Error ? err.message : String(err);
     let userMessage: string;
 
-    if (stderrText.includes('Missing credentials') || stderrText.includes('REDDIT_CLIENT_ID')) {
-      userMessage = '❌ Reddit credentials not configured\\.\n\nSet `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD` in the redditfetch \\.env file\\.';
-    } else if (stderrText.includes('ModuleNotFoundError')) {
-      const modMatch = stderrText.match(/No module named '(\w+)'/);
-      const modName = modMatch ? modMatch[1] : 'unknown';
-      userMessage = `❌ Missing Python dependency: \`${esc(modName)}\`\n\nRun: \`pip install ${esc(modName)}\``;
-    } else if (error?.error && (error.error as { killed?: boolean }).killed) {
+    if (errorMessage.includes('Missing Reddit credentials') || errorMessage.includes('REDDIT_CLIENT_ID')) {
+      userMessage = "❌ Reddit credentials not configured\\.\n\nSet `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USERNAME`, `REDDIT_PASSWORD` in claudegram's `\\.env` file\\.";
+    } else if (errorMessage.includes('timed out') || errorMessage.includes('AbortError')) {
       userMessage = '❌ Reddit fetch timed out\\.';
     } else {
-      const detail = stderrText || (error?.error?.message || 'Unknown error');
-      userMessage = `❌ Reddit fetch failed: ${esc(detail.substring(0, 300))}`;
+      userMessage = `❌ Reddit fetch failed: ${esc(errorMessage.substring(0, 300))}`;
     }
 
     await replyMd(ctx, userMessage);
   }
 }
 
+/**
+ * Handle inline keyboard callbacks for Reddit action picker (File / Chat / Both).
+ */
+export async function handleRedditActionCallback(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith('reddit_action:')) return;
+
+  const action = data.replace('reddit_action:', '');
+
+  // Look up pending result and validate message_id to avoid cross-result mixups
+  const pending = pendingRedditResults.get(chatId);
+  const callbackMsgId = ctx.callbackQuery?.message?.message_id;
+  if (!pending || callbackMsgId !== pending.messageId || Date.now() > pending.expiresAt) {
+    pendingRedditResults.delete(chatId);
+    await ctx.answerCallbackQuery({ text: 'Result expired. Please fetch again.' });
+    return;
+  }
+
+  await ctx.answerCallbackQuery();
+
+  const { output, jsonOutput, targets, format, hadOutputFlag } = pending;
+  const doFile = action === 'file' || action === 'both';
+  const doChat = action === 'chat' || action === 'both';
+
+  try {
+    // ── File mode ──────────────────────────────────────────────────
+    if (doFile) {
+      // Large thread JSON fallback (uses cached JSON, no second API call)
+      if (!format && output.length > config.REDDITFETCH_JSON_THRESHOLD_CHARS) {
+        try {
+          const outputPath = buildRedditOutputPath(ctx, targets);
+          fs.writeFileSync(outputPath, jsonOutput, 'utf-8');
+
+          const sent = await messageSender.sendDocument(
+            ctx,
+            outputPath,
+            `📎 Reddit JSON saved: ${path.basename(outputPath)}`
+          );
+
+          const displayPath = `.claudegram/reddit/${path.basename(outputPath)}`;
+          const notice = sent
+            ? `Large thread detected \\(${output.length} chars\\) — sent JSON file for structured review\\.`
+            : `Large thread detected \\(${output.length} chars\\) — JSON saved at \`${esc(displayPath)}\`\\.`;
+
+          await replyMd(ctx, notice);
+        } catch (jsonError) {
+          console.error('[Reddit] JSON fallback failed:', jsonError);
+          await messageSender.sendMessage(ctx, output);
+        }
+      } else {
+        await messageSender.sendMessage(ctx, output);
+      }
+
+      if (hadOutputFlag) {
+        await replyMd(ctx, 'ℹ️ Note: `-o/--output` is ignored in this picker flow\\. JSON is saved automatically for large threads\\.');
+      }
+    }
+
+    // ── Chat mode ──────────────────────────────────────────────────
+    if (doChat) {
+      const session = sessionManager.getSession(chatId);
+      if (!session) {
+        await replyMd(ctx, '⚠️ No project set\\. Use `/project` first to enable Chat mode\\.');
+      } else {
+        // 1. Save content to disk
+        const dir = ensureRedditOutputDir(ctx);
+        const slug = (targets[0] || 'reddit').replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40);
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const mdPath = path.join(dir, `reddit_${slug}_${stamp}.md`);
+        fs.writeFileSync(mdPath, output, 'utf-8');
+
+        // 2. Build prompt with inline content (truncated for large results)
+        const CHAT_INLINE_LIMIT = 3000;
+        const truncated = output.length > CHAT_INLINE_LIMIT;
+        const inlineContent = truncated
+          ? output.slice(0, CHAT_INLINE_LIMIT).trimEnd()
+          : output;
+
+        // Use relative display path to avoid leaking absolute server paths in conversation
+        const displayPath = `.claudegram/reddit/${path.basename(mdPath)}`;
+
+        let prompt = `I just fetched Reddit content and saved it to ${displayPath}. Here's the content:\n\n${inlineContent}`;
+        if (truncated) {
+          prompt += `\n\n[Content truncated — full content (${output.length} chars) is saved at ${displayPath}.]`;
+        }
+        prompt += '\n\nPlease summarize the key points and let me know if you have any questions.';
+
+        // 3. Queue a streaming response
+        try {
+          await queueRequest(chatId, prompt, async () => {
+            if (getStreamingMode() === 'streaming') {
+              await messageSender.startStreaming(ctx);
+              const abortController = new AbortController();
+              setAbortController(chatId, abortController);
+              try {
+                const response = await sendToAgent(chatId, prompt, {
+                  onProgress: (progressText) => {
+                    messageSender.updateStream(ctx, progressText);
+                  },
+                  abortController,
+                });
+                await messageSender.finishStreaming(ctx, response.text);
+                await maybeSendVoiceReply(ctx, response.text);
+              } catch (error) {
+                await messageSender.cancelStreaming(ctx);
+                throw error;
+              }
+            } else {
+              await ctx.replyWithChatAction('typing');
+              const abortController = new AbortController();
+              setAbortController(chatId, abortController);
+              const response = await sendToAgent(chatId, prompt, { abortController });
+              await messageSender.sendMessage(ctx, response.text);
+              await maybeSendVoiceReply(ctx, response.text);
+            }
+          });
+        } catch (error) {
+          if ((error as Error).message !== 'Queue cleared') {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            await replyMd(ctx, `❌ Chat failed: ${esc(errorMessage)}`);
+          }
+        }
+      }
+    }
+
+    // Edit the original picker message to show what was selected
+    const actionLabel = action === 'file' ? '📄 File' : action === 'chat' ? '💬 Chat' : '📄💬 Both';
+    try {
+      const targetLabel = targets.join(', ');
+      await ctx.editMessageText(
+        `📡 *Reddit Fetch* — ${esc(actionLabel)}\n` +
+        `Target: \`${esc(targetLabel)}\` · ${output.length} chars`,
+        { parse_mode: 'MarkdownV2' }
+      );
+    } catch { /* ignore edit failure */ }
+
+    // Clean up
+    pendingRedditResults.delete(chatId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    await replyMd(ctx, `❌ Action failed: ${esc(message.substring(0, 300))}`);
+    pendingRedditResults.delete(chatId);
+  }
+}
+
 // Pending Freedium results keyed by chatId, with 5-min TTL
 const pendingMediumResults = new Map<number, { article: FreediumArticle; messageId: number; expiresAt: number }>();
 const MEDIUM_RESULT_TTL_MS = 5 * 60 * 1000;
+
+// Periodic cleanup of expired pending results to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [chatId, entry] of pendingRedditResults) {
+    if (now > entry.expiresAt) pendingRedditResults.delete(chatId);
+  }
+  for (const [chatId, entry] of pendingMediumResults) {
+    if (now > entry.expiresAt) pendingMediumResults.delete(chatId);
+  }
+}, REDDIT_RESULT_TTL_MS);
 
 /**
  * Fetch a Medium article via Freedium and present inline action buttons.

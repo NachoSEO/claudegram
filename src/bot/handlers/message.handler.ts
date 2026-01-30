@@ -14,7 +14,7 @@ import {
 import { isClaudeCommand } from '../../claude/command-parser.js';
 import { escapeMarkdownV2 } from '../../telegram/markdown.js';
 import { createTelegraphFromFile } from '../../telegram/telegraph.js';
-import { getStreamingMode, executeRedditFetch, executeMediumFetch, showExtractMenu } from './command.handler.js';
+import { getStreamingMode, executeRedditFetch, executeMediumFetch, showExtractMenu, projectStatusSuffix, resumeCommandMessage } from './command.handler.js';
 import { executeVReddit } from '../../reddit/vreddit.js';
 import { detectPlatform, isValidUrl } from '../../media/extract.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
@@ -62,10 +62,10 @@ async function sendUsageFooter(
   if (!config.CONTEXT_SHOW_USAGE || !usage) return;
   const u = usage;
   const pct = u.contextWindow > 0
-    ? Math.round(((u.inputTokens + u.outputTokens) / u.contextWindow) * 100)
+    ? Math.round(((u.inputTokens + u.outputTokens + u.cacheReadTokens) / u.contextWindow) * 100)
     : 0;
   const bar = getProgressBar(pct);
-  const footer = `${bar} ${pct}% context · ${fmtTokens(u.inputTokens + u.outputTokens)}/${fmtTokens(u.contextWindow)} · $${u.totalCostUsd.toFixed(4)} · ${u.numTurns} turns`;
+  const footer = `${bar} ${pct}% context · ${fmtTokens(u.inputTokens + u.outputTokens + u.cacheReadTokens)}/${fmtTokens(u.contextWindow)} · $${u.totalCostUsd.toFixed(4)} · ${u.numTurns} turns`;
   await ctx.reply(footer, { parse_mode: undefined });
 }
 
@@ -75,13 +75,29 @@ async function sendCompactionNotification(
 ): Promise<void> {
   if (!config.CONTEXT_NOTIFY_COMPACTION || !compaction) return;
   const c = compaction;
+  console.log(`[Compaction] Sending notification: trigger=${c.trigger}, preTokens=${c.preTokens}`);
   const emoji = c.trigger === 'auto' ? '⚠️' : 'ℹ️';
-  const triggerLabel = c.trigger === 'auto' ? 'Auto\\-compacted' : 'Manually compacted';
-  const msg = `${emoji} *Context Compacted*\n\n`
-    + `${triggerLabel} — previous context was ${esc(fmtTokens(c.preTokens))} tokens\\.\n`
-    + `The agent now has a summarized version of your conversation\\.\n\n`
-    + `_Tip: Use /handoff before compaction to save a detailed context document\\._`;
-  await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+  const triggerLabel = c.trigger === 'auto' ? 'Auto-compacted' : 'Manually compacted';
+  try {
+    const msg = `${emoji} *Context Compacted*\n\n`
+      + `${esc(triggerLabel)} — previous context was ${esc(fmtTokens(c.preTokens))} tokens\\.\n`
+      + `The agent now has a summarized version of your conversation\\.\n\n`
+      + `_Tip: Use /handoff before compaction to save a detailed context document\\._`;
+    await ctx.reply(msg, { parse_mode: 'MarkdownV2' });
+  } catch (err) {
+    console.error('[Compaction] Failed to send notification:', err);
+    // Fallback to plain text if MarkdownV2 fails
+    try {
+      await ctx.reply(
+        `${emoji} Context Compacted\n\n`
+        + `${triggerLabel} — previous context was ${fmtTokens(c.preTokens)} tokens.\n`
+        + `The agent now has a summarized version of your conversation.`,
+        { parse_mode: undefined }
+      );
+    } catch (fallbackErr) {
+      console.error('[Compaction] Fallback notification also failed:', fallbackErr);
+    }
+  }
 }
 
 async function sendSessionInitNotification(
@@ -290,9 +306,14 @@ async function handleProjectReply(ctx: Context, chatId: number, projectPath: str
 
   const projectName = path.basename(resolvedPath);
   await ctx.reply(
-    `✅ Project set: *${esc(projectName)}*\n\n\`${esc(resolvedPath)}\`\n\nYou can now chat with Claude about this project\\!`,
+    `✅ Project set: *${esc(projectName)}*\n\n\`${esc(resolvedPath)}\`\n\nYou can now chat with Claude about this project\\!${projectStatusSuffix(chatId)}`,
     { parse_mode: 'MarkdownV2' }
   );
+
+  const s = sessionManager.getSession(chatId);
+  if (s?.claudeSessionId) {
+    await ctx.reply(resumeCommandMessage(s.claudeSessionId), { parse_mode: 'MarkdownV2' });
+  }
 }
 
 // Handle reply to file ForceReply prompt
