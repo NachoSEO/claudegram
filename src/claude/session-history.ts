@@ -1,16 +1,25 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { z } from 'zod';
 
-export interface SessionHistoryEntry {
-  conversationId: string;
-  claudeSessionId?: string;
-  projectPath: string;
-  projectName: string;
-  lastMessagePreview: string;
-  createdAt: string;
-  lastActivity: string;
-}
+// Zod schema for session history entry
+const sessionHistoryEntrySchema = z.object({
+  conversationId: z.string(),
+  claudeSessionId: z.string().optional(),
+  projectPath: z.string(),
+  projectName: z.string(),
+  lastMessagePreview: z.string(),
+  createdAt: z.string(),
+  lastActivity: z.string(),
+});
+
+// Zod schema for the full session history file
+const sessionHistoryDataSchema = z.object({
+  sessions: z.record(z.string(), z.array(sessionHistoryEntrySchema)),
+});
+
+export type SessionHistoryEntry = z.infer<typeof sessionHistoryEntrySchema>;
 
 interface SessionHistoryData {
   sessions: Record<number, SessionHistoryEntry[]>; // chatId -> history entries
@@ -38,7 +47,23 @@ class SessionHistory {
     try {
       if (fs.existsSync(HISTORY_FILE)) {
         const content = fs.readFileSync(HISTORY_FILE, 'utf-8');
-        this.data = JSON.parse(content);
+        const parsed = JSON.parse(content);
+
+        // Validate with Zod schema
+        const result = sessionHistoryDataSchema.safeParse(parsed);
+        if (result.success) {
+          // Convert string keys to number keys
+          this.data = { sessions: {} };
+          for (const [key, value] of Object.entries(result.data.sessions)) {
+            const chatId = parseInt(key, 10);
+            if (!isNaN(chatId)) {
+              this.data.sessions[chatId] = value;
+            }
+          }
+        } else {
+          console.warn('[SessionHistory] Invalid data format, starting fresh:', result.error.message);
+          this.data = { sessions: {} };
+        }
       }
     } catch (error) {
       console.error('[SessionHistory] Failed to load:', error);

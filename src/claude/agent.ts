@@ -40,6 +40,8 @@ interface ConversationMessage {
 
 interface AgentOptions {
   onProgress?: (text: string) => void;
+  onToolStart?: (toolName: string, input?: Record<string, unknown>) => void;
+  onToolEnd?: () => void;
   abortController?: AbortController;
   command?: string;
   model?: string;
@@ -235,7 +237,7 @@ export async function sendToAgent(
   message: string,
   options: AgentOptions = {}
 ): Promise<AgentResponse> {
-  const { onProgress, abortController, command, model } = options;
+  const { onProgress, onToolStart, onToolEnd, abortController, command, model } = options;
 
   const session = sessionManager.getSession(chatId);
 
@@ -424,6 +426,8 @@ export async function sendToAgent(
                   : '';
             logAt('verbose', `[Claude] Tool: ${block.name}${inputSummary ? ` → ${inputSummary}` : ''}`);
             toolsUsed.push(block.name);
+            // Notify tool start for terminal UI
+            onToolStart?.(block.name, toolInput);
           }
         }
       } else if (responseMessage.type === 'system') {
@@ -453,6 +457,8 @@ export async function sendToAgent(
         logAt('verbose', `[Claude] Tool progress: ${responseMessage.tool_name}`, responseMessage);
       } else if (responseMessage.type === 'tool_use_summary') {
         logAt('verbose', '[Claude] Tool use summary', responseMessage);
+        // Notify tool end for terminal UI (summary doesn't include tool name)
+        onToolEnd?.();
       } else if (responseMessage.type === 'auth_status') {
         logAt('basic', '[Claude] Auth status', responseMessage);
       } else if (responseMessage.type === 'stream_event') {
