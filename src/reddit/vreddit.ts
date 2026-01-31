@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { config } from '../config.js';
+import { isUrlAllowed } from '../utils/url-guard.js';
 
 const USER_AGENT = 'claudegram/1.0';
 const DASH_FETCH_TIMEOUT_MS = 15000;
@@ -485,12 +486,20 @@ async function resolveVideoSource(input: string): Promise<VideoSource> {
   if (token.includes('DASHPlaylist.mpd')) {
     const url = ensureUrl(token);
     console.log(`[vReddit] Direct DASH URL: ${url}`);
+    if (url && !(await isUrlAllowed(url))) {
+      console.log('[vReddit] Blocked DASH URL (private network)');
+      return null;
+    }
     return url ? { type: 'dash', url } : null;
   }
 
   const candidateUrl = ensureUrl(token);
   console.log(`[vReddit] Candidate URL: ${candidateUrl}`);
   if (!candidateUrl) return null;
+  if (!(await isUrlAllowed(candidateUrl))) {
+    console.log('[vReddit] Blocked URL (private network)');
+    return null;
+  }
 
   let parsed: URL;
   try {
@@ -514,6 +523,10 @@ async function resolveVideoSource(input: string): Promise<VideoSource> {
   console.log(`[vReddit] Resolving final URL from: ${parsed.toString()}`);
   const finalUrl = await resolveFinalUrl(parsed.toString());
   console.log(`[vReddit] Final URL: ${finalUrl}`);
+  if (!(await isUrlAllowed(finalUrl))) {
+    console.log('[vReddit] Blocked final URL (private network)');
+    return null;
+  }
 
   let finalParsed: URL;
   try {
@@ -541,6 +554,10 @@ async function resolveVideoSource(input: string): Promise<VideoSource> {
   const dashUrl = extractDashUrlFromHtml(html);
   if (dashUrl) {
     console.log(`[vReddit] Extracted DASH URL: ${dashUrl}`);
+    if (!(await isUrlAllowed(dashUrl))) {
+      console.log('[vReddit] Blocked DASH URL (private network)');
+      return null;
+    }
     return { type: 'dash', url: dashUrl };
   }
 
@@ -548,6 +565,10 @@ async function resolveVideoSource(input: string): Promise<VideoSource> {
   const externalUrl = extractExternalUrlFromHtml(html);
   if (externalUrl) {
     console.log(`[vReddit] Found external video embed: ${externalUrl}`);
+    if (!(await isUrlAllowed(externalUrl))) {
+      console.log('[vReddit] Blocked external URL (private network)');
+      return null;
+    }
     return { type: 'external', url: externalUrl };
   }
 

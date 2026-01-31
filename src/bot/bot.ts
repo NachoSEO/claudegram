@@ -60,7 +60,7 @@ export async function createBot(): Promise<Bot> {
   }));
 
   // Register command menu for autocomplete (non-blocking)
-  bot.api.setMyCommands([
+  const commandList = [
     { command: 'start', description: '🚀 Show help and getting started' },
     { command: 'project', description: '📁 Set working directory' },
     { command: 'status', description: '📊 Show current session status' },
@@ -81,13 +81,15 @@ export async function createBot(): Promise<Bot> {
     { command: 'sessions', description: '📚 View saved sessions' },
     { command: 'teleport', description: '🚀 Move session to terminal' },
     { command: 'resume', description: '▶️ Resume a session' },
-    { command: 'reddit', description: '📡 Fetch Reddit posts & subreddits' },
-    { command: 'vreddit', description: '🎬 Download Reddit video from post URL' },
-    { command: 'medium', description: '📰 Fetch Medium articles' },
-    { command: 'transcribe', description: '🎤 Transcribe audio to text' },
-    { command: 'extract', description: '📥 Extract text/audio/video from URL' },
+    ...(config.REDDIT_ENABLED ? [{ command: 'reddit', description: '📡 Fetch Reddit posts & subreddits' }] : []),
+    ...(config.VREDDIT_ENABLED ? [{ command: 'vreddit', description: '🎬 Download Reddit video from post URL' }] : []),
+    ...(config.MEDIUM_ENABLED ? [{ command: 'medium', description: '📰 Fetch Medium articles' }] : []),
+    ...(config.TRANSCRIBE_ENABLED ? [{ command: 'transcribe', description: '🎤 Transcribe audio to text' }] : []),
+    ...(config.EXTRACT_ENABLED ? [{ command: 'extract', description: '📥 Extract text/audio/video from URL' }] : []),
     { command: 'commands', description: '📜 List all commands' },
-  ]).then(() => {
+  ];
+
+  bot.api.setMyCommands(commandList).then(() => {
     console.log('📋 Command menu registered');
   }).catch((err) => {
     console.warn('⚠️ Failed to register commands:', err.message);
@@ -133,15 +135,25 @@ export async function createBot(): Promise<Bot> {
   bot.command('telegraph', handleTelegraph);
 
   // Reddit
-  bot.command('reddit', handleReddit);
-  bot.command('vreddit', handleVReddit);
-  bot.command('medium', handleMedium);
+  if (config.REDDIT_ENABLED) {
+    bot.command('reddit', handleReddit);
+  }
+  if (config.VREDDIT_ENABLED) {
+    bot.command('vreddit', handleVReddit);
+  }
+  if (config.MEDIUM_ENABLED) {
+    bot.command('medium', handleMedium);
+  }
 
   // Transcribe
-  bot.command('transcribe', handleTranscribe);
+  if (config.TRANSCRIBE_ENABLED) {
+    bot.command('transcribe', handleTranscribe);
+  }
 
   // Media extraction
-  bot.command('extract', handleExtract);
+  if (config.EXTRACT_ENABLED) {
+    bot.command('extract', handleExtract);
+  }
 
   // Callback query handler for inline keyboards
   bot.on('callback_query:data', async (ctx) => {

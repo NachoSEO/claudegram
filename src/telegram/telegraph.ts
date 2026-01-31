@@ -60,7 +60,7 @@ export async function initTelegraph(): Promise<void> {
       telegraphClient.token = account.access_token!;
 
       // Save for future use
-      fs.writeFileSync(accountFile, JSON.stringify(telegraphAccount, null, 2));
+      fs.writeFileSync(accountFile, JSON.stringify(telegraphAccount, null, 2), { mode: 0o600 });
       console.log('[Telegraph] Created new account');
     }
   } catch (error) {

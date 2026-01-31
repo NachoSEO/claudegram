@@ -98,7 +98,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
     // Transcribe using groq_transcribe.py
     const transcript = await transcribeFile(tempFilePath);
 
-    console.log(`[Voice] Transcript (${transcript.length} chars): ${transcript.substring(0, 100)}...`);
+    console.log(`[Voice] Transcript received (${transcript.length} chars)`);
 
     // Show full transcript if configured (uses smart Telegram chunking)
     if (config.VOICE_SHOW_TRANSCRIPT) {
