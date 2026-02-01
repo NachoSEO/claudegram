@@ -117,8 +117,8 @@ export async function cancelRequest(chatId: number): Promise<boolean> {
     cancelledChats.add(chatId);
     try {
       await q.interrupt();
-    } catch {
-      // interrupt() may throw if query already finished
+    } catch (err) {
+      console.debug('[cancelRequest] interrupt() threw for chat', chatId, err);
     }
     clearActiveQuery(chatId);
     return true;
@@ -145,8 +145,8 @@ export async function resetRequest(chatId: number): Promise<boolean> {
     cancelledChats.add(chatId);
     try {
       await q.interrupt();
-    } catch {
-      // interrupt() may throw if query already finished
+    } catch (err) {
+      console.debug('[resetRequest] interrupt() threw for chat', chatId, err);
     }
     // Also abort controller to fully tear down
     if (controller) controller.abort();

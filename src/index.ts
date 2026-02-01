@@ -24,8 +24,11 @@ async function main() {
   // This lets /cancel bypass the per-chat queue and interrupt running queries.
   const runner = run(bot);
 
-  // Graceful shutdown
+  // Graceful shutdown (guarded against duplicate signals)
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log('\n👋 Shutting down...');
     allowSleep();
     stopCleanup();
