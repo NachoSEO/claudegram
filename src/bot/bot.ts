@@ -45,6 +45,8 @@ import {
   handleExtract,
   handleExtractCallback,
   handleRedditActionCallback,
+  handleReset,
+  handleResetCallback,
 } from './handlers/command.handler.js';
 import { handleMessage } from './handlers/message.handler.js';
 import { handleVoice } from './handlers/voice.handler.js';
@@ -66,12 +68,8 @@ export async function createBot(): Promise<Bot> {
     { command: 'status', description: '📊 Show current session status' },
     { command: 'clear', description: '🗑️ Clear conversation history' },
     { command: 'cancel', description: '⏹️ Cancel current request' },
-    { command: 'file', description: '📎 Download a file from project' },
-    { command: 'telegraph', description: '📄 View markdown with Instant View' },
-    { command: 'model', description: '🤖 Switch AI model' },
-    { command: 'mode', description: '⚙️ Toggle streaming mode' },
-    { command: 'terminalui', description: '🖥️ Toggle terminal-style display' },
-    { command: 'tts', description: '🔊 Toggle voice replies' },
+    { command: 'softreset', description: '🔄 Soft reset (cancel + clear session)' },
+    { command: 'resume', description: '▶️ Resume a session' },
     { command: 'botstatus', description: '🩺 Show bot process status' },
     { command: 'restartbot', description: '🔁 Restart the bot' },
     { command: 'context', description: '🧠 Show Claude context usage' },
@@ -80,12 +78,17 @@ export async function createBot(): Promise<Bot> {
     { command: 'loop', description: '🔄 Run in loop mode' },
     { command: 'sessions', description: '📚 View saved sessions' },
     { command: 'teleport', description: '🚀 Move session to terminal' },
-    { command: 'resume', description: '▶️ Resume a session' },
     { command: 'reddit', description: '📡 Fetch Reddit posts & subreddits' },
     { command: 'vreddit', description: '🎬 Download Reddit video from post URL' },
     { command: 'medium', description: '📰 Fetch Medium articles' },
     { command: 'transcribe', description: '🎤 Transcribe audio to text' },
     { command: 'extract', description: '📥 Extract text/audio/video from URL' },
+    { command: 'file', description: '📎 Download a file from project' },
+    { command: 'telegraph', description: '📄 View markdown with Instant View' },
+    { command: 'model', description: '🤖 Switch AI model' },
+    { command: 'mode', description: '⚙️ Toggle streaming mode' },
+    { command: 'terminalui', description: '🖥️ Toggle terminal-style display' },
+    { command: 'tts', description: '🔊 Toggle voice replies' },
     { command: 'commands', description: '📜 List all commands' },
   ]).then(() => {
     console.log('📋 Command menu registered');
@@ -96,9 +99,10 @@ export async function createBot(): Promise<Bot> {
   // Apply auth middleware to all updates
   bot.use(authMiddleware);
 
-  // /cancel and /ping fire BEFORE sequentialize so they bypass per-chat ordering.
-  // This lets /cancel interrupt a running query without waiting for it to finish.
+  // /cancel, /reset, and /ping fire BEFORE sequentialize so they bypass per-chat ordering.
+  // This lets them interrupt a running query without waiting for it to finish.
   bot.command('cancel', handleCancel);
+  bot.command('softreset', handleReset);
   bot.command('ping', handlePing);
 
   // Sequentialize: same-chat updates are processed in order.
@@ -175,6 +179,8 @@ export async function createBot(): Promise<Bot> {
       await handleRedditActionCallback(ctx);
     } else if (data.startsWith('restart:')) {
       await handleRestartCallback(ctx);
+    } else if (data.startsWith('reset:')) {
+      await handleResetCallback(ctx);
     }
   });
 

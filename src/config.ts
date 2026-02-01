@@ -155,6 +155,13 @@ const envSchema = z.object({
     .string()
     .default('true')
     .transform((val) => val.toLowerCase() === 'true'),
+  // Logging: show SDK hook JSON dumps (PreToolUse, PostToolUse, stderr, etc.)
+  // When false (default), verbose mode shows clean operational logs without hook noise.
+  // When true, verbose mode includes full hook JSON payloads and stderr output.
+  LOG_AGENT_HOOKS: z
+    .string()
+    .default('false')
+    .transform((val) => val.toLowerCase() === 'true'),
   // Cancel behaviour: auto-cancel running query when user sends a new message
   CANCEL_ON_NEW_MESSAGE: z
     .string()

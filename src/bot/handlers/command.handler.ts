@@ -15,6 +15,7 @@ import { getUptimeFormatted } from '../middleware/stale-filter.js';
 import { getAvailableCommands } from '../../claude/command-parser.js';
 import {
   cancelRequest,
+  resetRequest,
   clearQueue,
   isProcessing,
   queueRequest,
@@ -1122,6 +1123,56 @@ export async function handleCancel(ctx: Context): Promise<void> {
     await replyMd(ctx, message);
   } else if (!wasProcessing) {
     await replyMd(ctx, 'ℹ️ Nothing to cancel\\.');
+  }
+}
+
+export async function handleReset(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const wasProcessing = isProcessing(chatId);
+  const reset = await resetRequest(chatId);
+  clearQueue(chatId);
+
+  // Clear the session so user starts fresh
+  clearConversation(chatId);
+  sessionManager.clearSession(chatId);
+
+  if (wasProcessing || reset) {
+    await replyMd(ctx, '🔄 Session reset\\. Current request cancelled and session cleared\\.');
+  } else {
+    await replyMd(ctx, '🔄 Session reset\\.');
+  }
+
+  // Show restore buttons (same UX as /restartbot)
+  try {
+    await ctx.api.sendMessage(chatId, '👇 Restore or start a new session:', {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '▶️ Continue', callback_data: 'reset:continue' },
+            { text: '📜 Resume', callback_data: 'reset:resume' },
+          ],
+        ],
+      },
+    });
+  } catch (e) {
+    console.debug('[Reset] Failed to send restore buttons:', e instanceof Error ? e.message : e);
+  }
+}
+
+export async function handleResetCallback(ctx: Context): Promise<void> {
+  const data = ctx.callbackQuery?.data;
+  if (!data) return;
+
+  if (data === 'reset:continue') {
+    await ctx.answerCallbackQuery();
+    await handleContinue(ctx);
+  } else if (data === 'reset:resume') {
+    await ctx.answerCallbackQuery();
+    await handleResume(ctx);
+  } else {
+    await ctx.answerCallbackQuery();
   }
 }
 

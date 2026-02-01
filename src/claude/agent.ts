@@ -12,7 +12,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import * as fs from 'fs';
 import { sessionManager } from './session-manager.js';
-import { setActiveQuery, clearActiveQuery } from './request-queue.js';
+import { setActiveQuery, clearActiveQuery, isCancelled } from './request-queue.js';
 import { config } from '../config.js';
 
 export interface AgentUsage {
@@ -310,34 +310,48 @@ export async function sendToAgent(
       }],
     };
 
+    // SDK hook logging: only register the noisy hooks (PreToolUse, PostToolUse, etc.)
+    // when LOG_AGENT_HOOKS is true. Session lifecycle hooks are always registered.
+    const verboseHooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> = config.LOG_AGENT_HOOKS
+      ? {
+        PreToolUse: [{
+          hooks: [async (input) => {
+            logAt('verbose', '[Hook] PreToolUse', input);
+            return { continue: true };
+          }],
+        }],
+        PostToolUse: [{
+          hooks: [async (input) => {
+            logAt('verbose', '[Hook] PostToolUse', input);
+            return { continue: true };
+          }],
+        }],
+        PostToolUseFailure: [{
+          hooks: [async (input) => {
+            logAt('verbose', '[Hook] PostToolUseFailure', input);
+            return { continue: true };
+          }],
+        }],
+        PermissionRequest: [{
+          hooks: [async (input) => {
+            logAt('verbose', '[Hook] PermissionRequest', input);
+            return { continue: true };
+          }],
+        }],
+        Notification: [{
+          hooks: [async (input) => {
+            logAt('verbose', '[Hook] Notification', input);
+            return { continue: true };
+          }],
+        }],
+      }
+      : {};
+
     const hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> | undefined =
       LOG_LEVELS[getLogLevel()] >= LOG_LEVELS.verbose
         ? {
           ...preCompactHook,
-          PreToolUse: [{
-            hooks: [async (input) => {
-              logAt('verbose', '[Hook] PreToolUse', input);
-              return { continue: true };
-            }],
-          }],
-          PostToolUse: [{
-            hooks: [async (input) => {
-              logAt('verbose', '[Hook] PostToolUse', input);
-              return { continue: true };
-            }],
-          }],
-          PostToolUseFailure: [{
-            hooks: [async (input) => {
-              logAt('verbose', '[Hook] PostToolUseFailure', input);
-              return { continue: true };
-            }],
-          }],
-          PermissionRequest: [{
-            hooks: [async (input) => {
-              logAt('verbose', '[Hook] PermissionRequest', input);
-              return { continue: true };
-            }],
-          }],
+          ...verboseHooks,
           SessionStart: [{
             hooks: [async (input) => {
               logAt('basic', '[Hook] SessionStart', input);
@@ -347,12 +361,6 @@ export async function sendToAgent(
           SessionEnd: [{
             hooks: [async (input) => {
               logAt('basic', '[Hook] SessionEnd', input);
-              return { continue: true };
-            }],
-          }],
-          Notification: [{
-            hooks: [async (input) => {
-              logAt('verbose', '[Hook] Notification', input);
               return { continue: true };
             }],
           }],
@@ -506,18 +514,22 @@ export async function sendToAgent(
             fullText += responseMessage.result;
             onProgress?.(fullText);
           }
+        } else if (responseMessage.subtype === 'error_during_execution' && isCancelled(chatId)) {
+          // Interrupted via /cancel - show clean cancellation message
+          fullText = '✅ Successfully cancelled - no tools or agents in process.';
+          onProgress?.(fullText);
         } else {
-          // error_max_turns or error_during_execution
+          // error_max_turns or unexpected error_during_execution
           fullText = `Error: ${responseMessage.subtype}`;
           onProgress?.(fullText);
         }
       }
     }
   } catch (error) {
-    // If aborted/interrupted, return cancellation message
-    if (abortController?.signal.aborted) {
+    // If cancelled via /cancel or /reset, return clean message
+    if (isCancelled(chatId) || abortController?.signal.aborted) {
       return {
-        text: '🛑 Request cancelled.',
+        text: '✅ Successfully cancelled - no tools or agents in process.',
         toolsUsed,
       };
     }

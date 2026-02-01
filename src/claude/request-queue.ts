@@ -11,6 +11,9 @@ const activeAbortControllers: Map<number, AbortController> = new Map();
 const activeQueries: Map<number, Query> = new Map();
 const pendingQueues: Map<number, Array<QueuedRequest<unknown>>> = new Map();
 const processingFlags: Map<number, boolean> = new Map();
+// Tracks chats where a cancel was initiated — checked by agent.ts to detect
+// user-initiated cancellation without calling controller.abort() (which crashes the SDK).
+const cancelledChats: Set<number> = new Set();
 
 export function getAbortController(chatId: number): AbortController | undefined {
   return activeAbortControllers.get(chatId);
@@ -30,6 +33,14 @@ export function setActiveQuery(chatId: number, q: Query): void {
 
 export function clearActiveQuery(chatId: number): void {
   activeQueries.delete(chatId);
+}
+
+export function isCancelled(chatId: number): boolean {
+  return cancelledChats.has(chatId);
+}
+
+export function clearCancelled(chatId: number): void {
+  cancelledChats.delete(chatId);
 }
 
 export function isProcessing(chatId: number): boolean {
@@ -87,6 +98,7 @@ async function processQueue(chatId: number): Promise<void> {
     processingFlags.set(chatId, false);
     clearAbortController(chatId);
     clearActiveQuery(chatId);
+    clearCancelled(chatId);
 
     if (queue.length > 0) {
       processQueue(chatId);
@@ -94,24 +106,57 @@ async function processQueue(chatId: number): Promise<void> {
   }
 }
 
+/** Soft cancel: interrupt the running query but keep the session alive. */
 export async function cancelRequest(chatId: number): Promise<boolean> {
   const q = activeQueries.get(chatId);
-  const controller = activeAbortControllers.get(chatId);
 
   if (q) {
-    // Graceful SDK-level interrupt - stops subprocess cleanly
+    // Set the cancelled flag BEFORE interrupt so agent.ts can detect it
+    // when the error_during_execution result arrives.
+    // Do NOT call controller.abort() — that crashes the SDK subprocess.
+    cancelledChats.add(chatId);
     try {
       await q.interrupt();
     } catch {
       // interrupt() may throw if query already finished
     }
     clearActiveQuery(chatId);
+    return true;
+  }
+
+  // Fallback to AbortController if no query stored
+  const controller = activeAbortControllers.get(chatId);
+  if (controller) {
+    cancelledChats.add(chatId);
+    controller.abort();
+    clearAbortController(chatId);
+    return true;
+  }
+
+  return false;
+}
+
+/** Soft reset: interrupt query + signal abort to fully tear down the session. */
+export async function resetRequest(chatId: number): Promise<boolean> {
+  const q = activeQueries.get(chatId);
+  const controller = activeAbortControllers.get(chatId);
+
+  if (q) {
+    cancelledChats.add(chatId);
+    try {
+      await q.interrupt();
+    } catch {
+      // interrupt() may throw if query already finished
+    }
+    // Also abort controller to fully tear down
+    if (controller) controller.abort();
+    clearActiveQuery(chatId);
     clearAbortController(chatId);
     return true;
   }
 
   if (controller) {
-    // Fallback to AbortController if no query stored
+    cancelledChats.add(chatId);
     controller.abort();
     clearAbortController(chatId);
     return true;
