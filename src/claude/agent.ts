@@ -272,8 +272,8 @@ export async function sendToAgent(
   // Determine permission mode
   const permissionMode = getPermissionMode(command);
 
-  // Determine model to use
-  const effectiveModel = model || chatModels.get(chatId) || undefined;
+  // Determine model to use (default to 'opus' to match getModel() default)
+  const effectiveModel = model || chatModels.get(chatId) || 'opus';
 
   try {
     const controller = abortController || new AbortController();
