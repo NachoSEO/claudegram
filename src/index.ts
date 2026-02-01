@@ -1,3 +1,4 @@
+import { run } from '@grammyjs/runner';
 import { createBot } from './bot/bot.js';
 import { config } from './config.js';
 import { preventSleep, allowSleep } from './utils/caffeinate.js';
@@ -13,25 +14,30 @@ async function main() {
 
   const bot = await createBot();
 
+  // Initialize bot (fetches bot info from Telegram)
+  await bot.init();
+  console.log(`✅ Bot started as @${bot.botInfo.username}`);
+  console.log('📱 Send /start in Telegram to begin');
+
+  // Start concurrent runner — updates are processed in parallel,
+  // with per-chat ordering enforced by the sequentialize middleware in bot.ts.
+  // This lets /cancel bypass the per-chat queue and interrupt running queries.
+  const runner = run(bot);
+
   // Graceful shutdown
-  const shutdown = () => {
+  const shutdown = async () => {
     console.log('\n👋 Shutting down...');
     allowSleep();
     stopCleanup();
-    bot.stop();
+    await runner.stop();
     process.exit(0);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => { shutdown(); });
+  process.on('SIGTERM', () => { shutdown(); });
 
-  // Start the bot
-  await bot.start({
-    onStart: (botInfo) => {
-      console.log(`✅ Bot started as @${botInfo.username}`);
-      console.log('📱 Send /start in Telegram to begin');
-    },
-  });
+  // Keep alive until the runner stops (crash or explicit stop)
+  await runner.task();
 }
 
 main().catch((error) => {

@@ -10,6 +10,8 @@ import {
   isProcessing,
   getQueuePosition,
   setAbortController,
+  cancelRequest,
+  clearQueue,
 } from '../../claude/request-queue.js';
 import { isClaudeCommand } from '../../claude/command-parser.js';
 import { escapeMarkdownV2 as esc } from '../../telegram/markdown.js';
@@ -240,10 +242,16 @@ export async function handleMessage(ctx: Context): Promise<void> {
     return;
   }
 
-  // Check if already processing - show queue position
+  // If CANCEL_ON_NEW_MESSAGE is enabled, auto-cancel the running query;
+  // otherwise queue the new message behind it and show the queue position.
   if (isProcessing(chatId)) {
-    const position = getQueuePosition(chatId) + 1;
-    await ctx.reply(`⏳ Queued \\(position ${position}\\)`, { parse_mode: 'MarkdownV2' });
+    if (config.CANCEL_ON_NEW_MESSAGE) {
+      await cancelRequest(chatId);
+      clearQueue(chatId);
+    } else {
+      const position = getQueuePosition(chatId) + 1;
+      await ctx.reply(`⏳ Queued \\(position ${position}\\)`, { parse_mode: 'MarkdownV2' });
+    }
   }
 
   try {

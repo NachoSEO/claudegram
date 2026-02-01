@@ -1,4 +1,5 @@
-import { Bot } from 'grammy';
+import { Bot, type Context } from 'grammy';
+import { sequentialize } from '@grammyjs/runner';
 import { config } from '../config.js';
 import { authMiddleware } from './middleware/auth.middleware.js';
 import {
@@ -49,6 +50,12 @@ import { handleMessage } from './handlers/message.handler.js';
 import { handleVoice } from './handlers/voice.handler.js';
 import { handlePhoto, handleImageDocument } from './handlers/photo.handler.js';
 
+// Resolve sequentialize constraint: same-chat updates are ordered,
+// but /cancel is registered BEFORE this middleware so it bypasses it.
+function getSequentializeKey(ctx: Context): string | undefined {
+  return ctx.chat?.id.toString();
+}
+
 export async function createBot(): Promise<Bot> {
   const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
 
@@ -89,7 +96,16 @@ export async function createBot(): Promise<Bot> {
   // Apply auth middleware to all updates
   bot.use(authMiddleware);
 
-  // Bot command handlers
+  // /cancel and /ping fire BEFORE sequentialize so they bypass per-chat ordering.
+  // This lets /cancel interrupt a running query without waiting for it to finish.
+  bot.command('cancel', handleCancel);
+  bot.command('ping', handlePing);
+
+  // Sequentialize: same-chat updates are processed in order.
+  // This runs AFTER /cancel so cancel bypasses it.
+  bot.use(sequentialize(getSequentializeKey));
+
+  // Bot command handlers (sequentialized per chat)
   bot.command('start', handleStart);
   bot.command('clear', handleClear);
   bot.command('project', handleProject);
@@ -102,9 +118,6 @@ export async function createBot(): Promise<Bot> {
   bot.command('restartbot', handleRestartBot);
   bot.command('context', handleContext);
 
-  // New commands
-  bot.command('ping', handlePing);
-  bot.command('cancel', handleCancel);
   bot.command('commands', handleCommands);
   bot.command('model', handleModelCommand);
   bot.command('plan', handlePlan);
@@ -168,7 +181,7 @@ export async function createBot(): Promise<Bot> {
   // Handle voice messages
   bot.on('message:voice', handleVoice);
 
-  // Handle audio messages (music/audio files — separate from voice notes)
+  // Handle audio messages (music/audio files - separate from voice notes)
   bot.on('message:audio', handleTranscribeAudio);
 
   // Handle images

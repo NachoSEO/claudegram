@@ -155,6 +155,11 @@ const envSchema = z.object({
     .string()
     .default('true')
     .transform((val) => val.toLowerCase() === 'true'),
+  // Cancel behaviour: auto-cancel running query when user sends a new message
+  CANCEL_ON_NEW_MESSAGE: z
+    .string()
+    .default('false')
+    .transform((val) => val.toLowerCase() === 'true'),
 });
 
 const parsed = envSchema.safeParse(process.env);

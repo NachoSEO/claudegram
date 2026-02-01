@@ -1,3 +1,5 @@
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
+
 type QueuedRequest<T> = {
   message: string;
   handler: () => Promise<T>;
@@ -5,20 +7,29 @@ type QueuedRequest<T> = {
   reject: (error: Error) => void;
 };
 
-const activeRequests: Map<number, AbortController> = new Map();
+const activeAbortControllers: Map<number, AbortController> = new Map();
+const activeQueries: Map<number, Query> = new Map();
 const pendingQueues: Map<number, Array<QueuedRequest<unknown>>> = new Map();
 const processingFlags: Map<number, boolean> = new Map();
 
 export function getAbortController(chatId: number): AbortController | undefined {
-  return activeRequests.get(chatId);
+  return activeAbortControllers.get(chatId);
 }
 
 export function setAbortController(chatId: number, controller: AbortController): void {
-  activeRequests.set(chatId, controller);
+  activeAbortControllers.set(chatId, controller);
 }
 
 export function clearAbortController(chatId: number): void {
-  activeRequests.delete(chatId);
+  activeAbortControllers.delete(chatId);
+}
+
+export function setActiveQuery(chatId: number, q: Query): void {
+  activeQueries.set(chatId, q);
+}
+
+export function clearActiveQuery(chatId: number): void {
+  activeQueries.delete(chatId);
 }
 
 export function isProcessing(chatId: number): boolean {
@@ -75,6 +86,7 @@ async function processQueue(chatId: number): Promise<void> {
   } finally {
     processingFlags.set(chatId, false);
     clearAbortController(chatId);
+    clearActiveQuery(chatId);
 
     if (queue.length > 0) {
       processQueue(chatId);
@@ -82,13 +94,29 @@ async function processQueue(chatId: number): Promise<void> {
   }
 }
 
-export function cancelRequest(chatId: number): boolean {
-  const controller = activeRequests.get(chatId);
+export async function cancelRequest(chatId: number): Promise<boolean> {
+  const q = activeQueries.get(chatId);
+  const controller = activeAbortControllers.get(chatId);
+
+  if (q) {
+    // Graceful SDK-level interrupt - stops subprocess cleanly
+    try {
+      await q.interrupt();
+    } catch {
+      // interrupt() may throw if query already finished
+    }
+    clearActiveQuery(chatId);
+    clearAbortController(chatId);
+    return true;
+  }
+
   if (controller) {
+    // Fallback to AbortController if no query stored
     controller.abort();
     clearAbortController(chatId);
     return true;
   }
+
   return false;
 }
 

@@ -1111,7 +1111,7 @@ export async function handleCancel(ctx: Context): Promise<void> {
   if (!chatId) return;
 
   const wasProcessing = isProcessing(chatId);
-  const cancelled = cancelRequest(chatId);
+  const cancelled = await cancelRequest(chatId);
   const clearedCount = clearQueue(chatId);
 
   if (cancelled || clearedCount > 0) {
