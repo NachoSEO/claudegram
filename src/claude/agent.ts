@@ -127,7 +127,9 @@ Structure guidelines for long responses:
 - Use bullet lists liberally — they render cleanly
 - Use > blockquotes for callouts, warnings, or important notes
 - Keep paragraphs concise; Telegraph renders best with short blocks of text
-- Nest sub-items under list items for tree-like structures instead of indented text
+- Nest sub-items under list items for tree-like structures instead of indented text`;
+
+const REDDIT_TOOL_PROMPT = `
 
 Reddit Tool:
 You have access to a Reddit fetching tool via Bash.
@@ -200,7 +202,14 @@ Reasoning Summary (required when enabled):
 - Do NOT reveal chain-of-thought, hidden reasoning, or sensitive tool outputs.
 - Skip the summary for very short acknowledgements or pure error messages.`;
 
-const SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}${REDDIT_VIDEO_TOOL_PROMPT}${MEDIUM_TOOL_PROMPT}${EXTRACT_TOOL_PROMPT}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
+const TOOL_PROMPTS = [
+  config.REDDIT_ENABLED ? REDDIT_TOOL_PROMPT : '',
+  config.VREDDIT_ENABLED ? REDDIT_VIDEO_TOOL_PROMPT : '',
+  config.MEDIUM_ENABLED ? MEDIUM_TOOL_PROMPT : '',
+  config.EXTRACT_ENABLED ? EXTRACT_TOOL_PROMPT : '',
+].join('');
+
+const SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}${TOOL_PROMPTS}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
 
 /**
  * Strip the "Reasoning Summary" section from the end of a response

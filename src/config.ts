@@ -8,6 +8,8 @@ const defaultEnvPath = path.resolve(__dirname, '..', '.env');
 const envPath = process.env.CLAUDEGRAM_ENV_PATH || defaultEnvPath;
 loadEnv({ path: envPath });
 
+const toBool = (val: string) => val.toLowerCase() === 'true';
+
 const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, 'Telegram bot token is required'),
   ALLOWED_USER_IDS: z
@@ -23,7 +25,7 @@ const envSchema = z.object({
     .string()
     .default('true')
     .transform((val) => val.toLowerCase() === 'true'),
-  CLAUDE_SDK_LOG_LEVEL: z.enum(['off', 'basic', 'verbose', 'trace']).default('verbose'),
+  CLAUDE_SDK_LOG_LEVEL: z.enum(['off', 'basic', 'verbose', 'trace']).default('basic'),
   CLAUDE_SDK_INCLUDE_PARTIAL: z
     .string()
     .default('false')
@@ -44,6 +46,7 @@ const envSchema = z.object({
     .default('4000')
     .transform((val) => parseInt(val, 10)),
   // TTS Configuration
+  TTS_ENABLED: z.string().default('true').transform(toBool),
   TTS_PROVIDER: z.enum(['groq', 'openai']).default('groq'),
   TTS_MODEL: z.string().default('gpt-4o-mini-tts'),
   TTS_VOICE: z.string().default('coral'),
@@ -75,6 +78,7 @@ const envSchema = z.object({
     .default('8000')
     .transform((val) => parseInt(val, 10)),
   // Reddit fetch configuration
+  REDDIT_ENABLED: z.string().default('true').transform(toBool),
   REDDITFETCH_PATH: z.string().default(''),
   REDDITFETCH_TIMEOUT_MS: z
     .string()
@@ -89,11 +93,13 @@ const envSchema = z.object({
     .default('5')
     .transform((val) => parseInt(val, 10)),
   // Reddit video download
+  VREDDIT_ENABLED: z.string().default('true').transform(toBool),
   REDDIT_VIDEO_MAX_SIZE_MB: z
     .string()
     .default('50')
     .transform((val) => parseInt(val, 10)),
   // Medium / Freedium configuration
+  MEDIUM_ENABLED: z.string().default('true').transform(toBool),
   MEDIUM_TIMEOUT_MS: z
     .string()
     .default('15000')
@@ -110,6 +116,7 @@ const envSchema = z.object({
   // Voice transcription (Groq Whisper)
   GROQ_API_KEY: z.string().optional(),
   GROQ_TRANSCRIBE_PATH: z.string().default(''),
+  TRANSCRIBE_ENABLED: z.string().default('true').transform(toBool),
   VOICE_SHOW_TRANSCRIPT: z
     .string()
     .default('true')
@@ -129,6 +136,7 @@ const envSchema = z.object({
     .default('4000')
     .transform((val) => parseInt(val, 10)),
   // Media extraction (/extract command)
+  EXTRACT_ENABLED: z.string().default('true').transform(toBool),
   YTDLP_COOKIES_PATH: z.string().default(''),
   YTDLP_PROXY_LIST_PATH: z.string().default(''),
   EXTRACT_TRANSCRIBE_TIMEOUT_MS: z
@@ -148,6 +156,10 @@ const envSchema = z.object({
   TERMINAL_UI_DEFAULT: z
     .string()
     .default('true')
+    .transform((val) => val.toLowerCase() === 'true'),
+  ALLOW_PRIVATE_NETWORK_URLS: z
+    .string()
+    .default('false')
     .transform((val) => val.toLowerCase() === 'true'),
 });
 

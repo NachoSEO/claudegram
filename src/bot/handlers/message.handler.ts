@@ -20,10 +20,15 @@ import { detectPlatform, isValidUrl } from '../../media/extract.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getWorkspaceRoot, isPathWithinRoot } from '../../utils/workspace-guard.js';
 
 // Helper for MarkdownV2
 function esc(text: string): string {
   return escapeMarkdownV2(text);
+}
+
+async function replyFeatureDisabled(ctx: Context, feature: string): Promise<void> {
+  await ctx.reply(`⚠️ ${feature} feature is disabled in configuration.`, { parse_mode: undefined });
 }
 
 function extractRedditUrl(text: string): string | null {
@@ -101,6 +106,8 @@ async function sendSessionInitNotification(
 }
 
 function getAutoVRedditUrl(text: string): string | null {
+  if (!config.VREDDIT_ENABLED) return null;
+
   const trimmed = text.trim();
   if (!trimmed || trimmed.startsWith('/')) return null;
 
@@ -178,24 +185,40 @@ export async function handleMessage(ctx: Context): Promise<void> {
 
     // Handle reddit fetch reply
     if (replyText.includes('Reddit Fetch') || replyText.includes('Reddit target')) {
+      if (!config.REDDIT_ENABLED) {
+        await replyFeatureDisabled(ctx, 'Reddit');
+        return;
+      }
       await executeRedditFetch(ctx, text.trim());
       return;
     }
 
     // Handle Reddit video fetch reply
     if (replyText.includes('Reddit Video')) {
+      if (!config.VREDDIT_ENABLED) {
+        await replyFeatureDisabled(ctx, 'Reddit video');
+        return;
+      }
       await executeVReddit(ctx, text.trim());
       return;
     }
 
     // Handle medium fetch reply
     if (replyText.includes('Medium Fetch') || replyText.includes('Medium article')) {
+      if (!config.MEDIUM_ENABLED) {
+        await replyFeatureDisabled(ctx, 'Medium');
+        return;
+      }
       await executeMediumFetch(ctx, text.trim());
       return;
     }
 
     // Handle extract media reply
     if (replyText.includes('Extract Media') || replyText.includes('Paste a URL')) {
+      if (!config.EXTRACT_ENABLED) {
+        await replyFeatureDisabled(ctx, 'Extract');
+        return;
+      }
       await showExtractMenu(ctx, text.trim());
       return;
     }
@@ -209,7 +232,7 @@ export async function handleMessage(ctx: Context): Promise<void> {
 
   // Auto-detect YouTube / TikTok / Instagram URLs sent as bare links → show extract menu
   const trimmedText = text.trim();
-  if (isValidUrl(trimmedText) && detectPlatform(trimmedText) !== 'unknown') {
+  if (config.EXTRACT_ENABLED && isValidUrl(trimmedText) && detectPlatform(trimmedText) !== 'unknown') {
     await showExtractMenu(ctx, trimmedText);
     return;
   }
@@ -265,6 +288,15 @@ async function handleProjectReply(ctx: Context, chatId: number, projectPath: str
 
   // Resolve to absolute path
   resolvedPath = path.resolve(resolvedPath);
+  const workspaceRoot = getWorkspaceRoot();
+
+  if (!isPathWithinRoot(workspaceRoot, resolvedPath)) {
+    await ctx.reply(
+      `❌ Path must be within workspace root: \`${esc(workspaceRoot)}\``,
+      { parse_mode: 'MarkdownV2' }
+    );
+    return;
+  }
 
   // Check if exists
   if (!fs.existsSync(resolvedPath)) {
@@ -311,6 +343,15 @@ async function handleFileReply(ctx: Context, chatId: number, filePath: string): 
   const fullPath = trimmedPath.startsWith('/')
     ? trimmedPath
     : path.join(session.workingDirectory, trimmedPath);
+  const workspaceRoot = getWorkspaceRoot();
+
+  if (!isPathWithinRoot(workspaceRoot, fullPath)) {
+    await ctx.reply(
+      `❌ File path must be within workspace root: \`${esc(workspaceRoot)}\``,
+      { parse_mode: 'MarkdownV2' }
+    );
+    return;
+  }
 
   if (!fs.existsSync(fullPath)) {
     await ctx.reply(
@@ -430,6 +471,15 @@ async function handleTelegraphReply(ctx: Context, chatId: number, filePath: stri
   const fullPath = trimmedPath.startsWith('/')
     ? trimmedPath
     : path.join(session.workingDirectory, trimmedPath);
+  const workspaceRoot = getWorkspaceRoot();
+
+  if (!isPathWithinRoot(workspaceRoot, fullPath)) {
+    await ctx.reply(
+      `❌ File path must be within workspace root: \`${esc(workspaceRoot)}\``,
+      { parse_mode: 'MarkdownV2' }
+    );
+    return;
+  }
 
   if (!fs.existsSync(fullPath)) {
     await ctx.reply(

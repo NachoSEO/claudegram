@@ -45,10 +45,19 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile, spawn } from 'child_process';
 import { sanitizeError, sanitizePath } from '../../utils/sanitize.js';
+import { getWorkspaceRoot, isPathWithinRoot } from '../../utils/workspace-guard.js';
 
 // Helper for consistent MarkdownV2 replies
 async function replyMd(ctx: Context, text: string): Promise<void> {
   await ctx.reply(text, { parse_mode: 'MarkdownV2' });
+}
+
+function buildFeatureDisabledMessage(feature: string): string {
+  return `⚠️ ${feature} feature is disabled in configuration.`;
+}
+
+async function replyFeatureDisabled(ctx: Context, feature: string): Promise<void> {
+  await ctx.reply(buildFeatureDisabledMessage(feature), { parse_mode: undefined });
 }
 
 const OPENAI_TTS_VOICES = [
@@ -406,8 +415,7 @@ export async function handleProjectCallback(ctx: Context): Promise<void> {
 }
 
 function getProjectRoot(): string {
-  const root = config.WORKSPACE_DIR || process.env.HOME || process.cwd();
-  return path.resolve(root);
+  return getWorkspaceRoot();
 }
 
 function isWithinRoot(root: string, target: string): boolean {
@@ -577,14 +585,20 @@ export async function handleProject(ctx: Context): Promise<void> {
   }
 
   let projectPath: string;
+  const workspaceRoot = getWorkspaceRoot();
+
   if (args.startsWith('/') || args.startsWith('~')) {
     projectPath = args;
     if (projectPath.startsWith('~')) {
       projectPath = path.join(process.env.HOME || '', projectPath.slice(1));
     }
     projectPath = path.resolve(projectPath);
+    if (!isPathWithinRoot(workspaceRoot, projectPath)) {
+      await replyMd(ctx, `❌ Path must be within workspace root: \`${esc(workspaceRoot)}\``);
+      return;
+    }
   } else {
-    projectPath = path.join(config.WORKSPACE_DIR, args);
+    projectPath = path.join(workspaceRoot, args);
   }
 
   if (!fs.existsSync(projectPath)) {
@@ -1489,6 +1503,12 @@ export async function handleFile(ctx: Context): Promise<void> {
   const fullPath = filePath.startsWith('/')
     ? filePath
     : path.join(session.workingDirectory, filePath);
+  const workspaceRoot = getWorkspaceRoot();
+
+  if (!isPathWithinRoot(workspaceRoot, fullPath)) {
+    await replyMd(ctx, `❌ File path must be within workspace root: \`${esc(workspaceRoot)}\``);
+    return;
+  }
 
   if (!fs.existsSync(fullPath)) {
     await replyMd(ctx, `❌ File not found: \`${esc(filePath)}\``);
@@ -1544,6 +1564,12 @@ export async function handleTelegraph(ctx: Context): Promise<void> {
   const fullPath = filePath.startsWith('/')
     ? filePath
     : path.join(session.workingDirectory, filePath);
+  const workspaceRoot = getWorkspaceRoot();
+
+  if (!isPathWithinRoot(workspaceRoot, fullPath)) {
+    await replyMd(ctx, `❌ File path must be within workspace root: \`${esc(workspaceRoot)}\``);
+    return;
+  }
 
   if (!fs.existsSync(fullPath)) {
     await replyMd(ctx, `❌ File not found: \`${esc(filePath)}\``);
@@ -1684,6 +1710,11 @@ export async function executeRedditFetch(
   ctx: Context,
   args: string
 ): Promise<void> {
+  if (!config.REDDIT_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Reddit');
+    return;
+  }
+
   await ctx.replyWithChatAction('typing');
 
   const tokens = tokenizeArgs(args);
@@ -1775,6 +1806,11 @@ export async function executeMediumFetch(
   ctx: Context,
   args: string
 ): Promise<void> {
+  if (!config.MEDIUM_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Medium');
+    return;
+  }
+
   await ctx.replyWithChatAction('typing');
 
   const url = args.trim().split(/\s+/)[0];
@@ -1835,6 +1871,12 @@ export async function executeMediumFetch(
  * Handle inline keyboard callbacks for Medium article actions.
  */
 export async function handleMediumCallback(ctx: Context): Promise<void> {
+  if (!config.MEDIUM_ENABLED) {
+    await ctx.answerCallbackQuery({ text: 'Feature disabled' });
+    await replyFeatureDisabled(ctx, 'Medium');
+    return;
+  }
+
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 
@@ -1904,6 +1946,11 @@ export async function handleMediumCallback(ctx: Context): Promise<void> {
 }
 
 export async function handleMedium(ctx: Context): Promise<void> {
+  if (!config.MEDIUM_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Medium');
+    return;
+  }
+
   const text = ctx.message?.text || '';
   const args = text.split(' ').slice(1).join(' ').trim();
 
@@ -1931,6 +1978,11 @@ export async function handleMedium(ctx: Context): Promise<void> {
 }
 
 export async function handleReddit(ctx: Context): Promise<void> {
+  if (!config.REDDIT_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Reddit');
+    return;
+  }
+
   const text = ctx.message?.text || '';
   const args = text.split(' ').slice(1).join(' ').trim();
 
@@ -1960,6 +2012,11 @@ export async function handleReddit(ctx: Context): Promise<void> {
 }
 
 export async function handleVReddit(ctx: Context): Promise<void> {
+  if (!config.VREDDIT_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Reddit video');
+    return;
+  }
+
   const text = ctx.message?.text || '';
   const args = text.split(' ').slice(1).join(' ').trim();
 
@@ -2023,6 +2080,11 @@ async function transcribeAndSend(
   fileId: string,
   mimeHint?: string
 ): Promise<void> {
+  if (!config.TRANSCRIBE_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Transcribe');
+    return;
+  }
+
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 
@@ -2075,6 +2137,11 @@ async function transcribeAndSend(
 }
 
 export async function handleTranscribe(ctx: Context): Promise<void> {
+  if (!config.TRANSCRIBE_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Transcribe');
+    return;
+  }
+
   // Path A: reply to a voice/audio/audio-document message
   const reply = ctx.message?.reply_to_message;
   if (reply) {
@@ -2111,6 +2178,11 @@ export async function handleTranscribe(ctx: Context): Promise<void> {
  * Handle audio messages (message:audio) sent as reply to the Transcribe ForceReply.
  */
 export async function handleTranscribeAudio(ctx: Context): Promise<void> {
+  if (!config.TRANSCRIBE_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Transcribe');
+    return;
+  }
+
   const replyTo = ctx.message?.reply_to_message;
   if (!replyTo || !replyTo.from?.is_bot) return;
   const replyText = (replyTo as { text?: string }).text || '';
@@ -2126,6 +2198,11 @@ export async function handleTranscribeAudio(ctx: Context): Promise<void> {
  * Handle document messages with audio MIME sent as reply to the Transcribe ForceReply.
  */
 export async function handleTranscribeDocument(ctx: Context): Promise<void> {
+  if (!config.TRANSCRIBE_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Transcribe');
+    return;
+  }
+
   const replyTo = ctx.message?.reply_to_message;
   if (!replyTo || !replyTo.from?.is_bot) return;
   const replyText = (replyTo as { text?: string }).text || '';
@@ -2185,6 +2262,11 @@ setInterval(() => {
 }, 60_000);
 
 export async function handleExtract(ctx: Context): Promise<void> {
+  if (!config.EXTRACT_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Extract');
+    return;
+  }
+
   const text = ctx.message?.text || '';
   const args = text.split(' ').slice(1).join(' ').trim();
 
@@ -2213,6 +2295,11 @@ export async function handleExtract(ctx: Context): Promise<void> {
 }
 
 export async function showExtractMenu(ctx: Context, url: string): Promise<void> {
+  if (!config.EXTRACT_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Extract');
+    return;
+  }
+
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 
@@ -2259,6 +2346,12 @@ export async function showExtractMenu(ctx: Context, url: string): Promise<void> 
 }
 
 export async function handleExtractCallback(ctx: Context): Promise<void> {
+  if (!config.EXTRACT_ENABLED) {
+    await ctx.answerCallbackQuery({ text: 'Feature disabled' });
+    await replyFeatureDisabled(ctx, 'Extract');
+    return;
+  }
+
   const data = ctx.callbackQuery?.data;
   const chatId = ctx.chat?.id;
   if (!data || !chatId) return;
@@ -2365,6 +2458,11 @@ export async function handleExtractCallback(ctx: Context): Promise<void> {
 }
 
 export async function executeExtract(ctx: Context, url: string, mode: ExtractMode, subtitleFormat?: SubtitleFormat): Promise<void> {
+  if (!config.EXTRACT_ENABLED) {
+    await replyFeatureDisabled(ctx, 'Extract');
+    return;
+  }
+
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 

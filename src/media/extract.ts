@@ -5,6 +5,7 @@ import * as path from 'path';
 import { config } from '../config.js';
 import { transcribeFile } from '../audio/transcribe.js';
 import { sanitizeError, sanitizePath } from '../utils/sanitize.js';
+import { isUrlAllowed } from '../utils/url-guard.js';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -436,6 +437,10 @@ export interface ExtractOptions {
 
 export async function extractMedia(opts: ExtractOptions): Promise<ExtractResult> {
   const { url, mode, subtitleFormat, onProgress } = opts;
+  const isAllowed = await isUrlAllowed(url);
+  if (!isAllowed) {
+    throw new Error('URL is not allowed. Private or local network addresses are blocked.');
+  }
   const platform = detectPlatform(url);
   const emoji = platformEmoji(platform);
 

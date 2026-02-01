@@ -73,7 +73,7 @@ class SessionHistory {
 
   private save(): void {
     try {
-      fs.writeFileSync(HISTORY_FILE, JSON.stringify(this.data, null, 2));
+      fs.writeFileSync(HISTORY_FILE, JSON.stringify(this.data, null, 2), { mode: 0o600 });
     } catch (error) {
       console.error('[SessionHistory] Failed to save:', error);
     }
