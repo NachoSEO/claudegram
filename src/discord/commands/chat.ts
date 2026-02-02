@@ -12,11 +12,13 @@ import {
   queueRequest,
   setAbortController,
 } from '../../claude/request-queue.js';
+import { sendCompactionNotice, sendSessionInitNotice } from '../compaction-notice.js';
 
 async function streamResponse(
   chatId: number,
   channelId: string,
   message: string,
+  channel: any,
 ): Promise<void> {
   const abortController = new AbortController();
   setAbortController(chatId, abortController);
@@ -37,6 +39,10 @@ async function streamResponse(
     });
 
     await discordMessageSender.finishStreaming(channelId, response.text);
+
+    // Context visibility notifications
+    await sendCompactionNotice(channel, response.compaction);
+    await sendSessionInitNotice(channel, chatId, response.sessionInit);
   } catch (error) {
     await discordMessageSender.cancelStreaming(channelId);
     throw error;
@@ -65,7 +71,7 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
     await discordMessageSender.startStreaming(interaction, channelId);
 
     await queueRequest(chatId, message, async () => {
-      await streamResponse(chatId, channelId, message);
+      await streamResponse(chatId, channelId, message, interaction.channel!);
     });
   } else {
     // In a channel — create a thread, stream response there
@@ -88,7 +94,7 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
     await discordMessageSender.startStreamingFromExistingMessage(thinkingMsg, threadChannelId);
 
     await queueRequest(chatId, message, async () => {
-      await streamResponse(chatId, threadChannelId, message);
+      await streamResponse(chatId, threadChannelId, message, thread);
     });
   }
 }

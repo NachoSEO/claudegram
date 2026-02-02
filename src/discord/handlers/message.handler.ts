@@ -17,6 +17,7 @@ import {
 import { sanitizeError } from '../../utils/sanitize.js';
 import { handleVoiceMessage } from './voice.handler.js';
 import { maybeSendDiscordVoiceReply } from '../voice-reply.js';
+import { sendCompactionNotice, sendSessionInitNotice } from '../compaction-notice.js';
 
 export async function handleMessage(message: Message): Promise<void> {
   // Ignore bot messages
@@ -106,6 +107,10 @@ export async function handleMessage(message: Message): Promise<void> {
 
         await discordMessageSender.finishStreaming(channelId, response.text);
         await maybeSendDiscordVoiceReply(message, response.text);
+
+        // Context visibility notifications
+        await sendCompactionNotice(message.channel, response.compaction);
+        await sendSessionInitNotice(message.channel, chatId, response.sessionInit);
 
         // Remove hourglass on completion
         try {
