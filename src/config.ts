@@ -9,11 +9,11 @@ const envPath = process.env.CLAUDEGRAM_ENV_PATH || defaultEnvPath;
 loadEnv({ path: envPath });
 
 const envSchema = z.object({
-  TELEGRAM_BOT_TOKEN: z.string().min(1, 'Telegram bot token is required'),
+  TELEGRAM_BOT_TOKEN: z.string().default(''),
   ALLOWED_USER_IDS: z
     .string()
-    .min(1, 'At least one allowed user ID is required')
-    .transform((val) => val.split(',').map((id) => parseInt(id.trim(), 10))),
+    .default('')
+    .transform((val) => val ? val.split(',').map((id) => parseInt(id.trim(), 10)) : []),
   ANTHROPIC_API_KEY: z.string().optional(), // Optional - uses Claude Max subscription if not set
   // OpenAI (TTS)
   OPENAI_API_KEY: z.string().optional(),

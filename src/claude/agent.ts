@@ -39,6 +39,8 @@ interface ConversationMessage {
   content: string;
 }
 
+export type Platform = 'telegram' | 'discord';
+
 interface AgentOptions {
   onProgress?: (text: string) => void;
   onToolStart?: (toolName: string, input?: Record<string, unknown>) => void;
@@ -46,6 +48,7 @@ interface AgentOptions {
   abortController?: AbortController;
   command?: string;
   model?: string;
+  platform?: Platform;
 }
 
 interface LoopOptions extends AgentOptions {
@@ -68,12 +71,55 @@ export function getCachedUsage(chatId: number): AgentUsage | undefined {
   return chatUsageCache.get(chatId);
 }
 
-const BASE_SYSTEM_PROMPT = `You are ${config.BOT_NAME}, an AI assistant helping via Telegram.
+function getBaseSystemPrompt(platform: Platform = 'telegram'): string {
+  const commonGuidelines = `You are ${config.BOT_NAME}, an AI assistant.
 
 Guidelines:
 - Show relevant code snippets when helpful, but keep them short
 - If a task requires multiple steps, execute them and summarize what you did
-- When you can't do something, explain why briefly
+- When you can't do something, explain why briefly`;
+
+  if (platform === 'discord') {
+    return `${commonGuidelines}
+
+Response Formatting — Discord:
+Your responses are displayed in Discord. Use standard markdown.
+
+Discord supports:
+- Headings: # h1, ## h2, ### h3
+- Text formatting: **bold**, *italic*, ~~strikethrough~~, \`inline code\`, __underline__
+- Links: URLs auto-embed, [text](url) for masked links
+- Lists: unordered (- item) and ordered (1. item)
+- Code blocks: \`\`\`lang\\ncode\`\`\` with syntax highlighting
+- Blockquotes: > text, >>> multi-line blockquote
+- Spoiler tags: ||hidden text||
+
+Discord does NOT support:
+- TABLES — pipe-delimited markdown tables (|col|col|) will NOT render. They show as ugly raw text. NEVER use markdown tables.
+
+Instead of tables, use these alternatives (in order of preference):
+1. Bullet lists with bold labels — best for key-value data:
+   - **Name**: Alice
+   - **Age**: 30
+   - **City**: NYC
+
+2. Nested lists — best for grouped data:
+   - **Frontend**
+     - React 18
+     - TypeScript
+
+3. Preformatted code blocks — for data where alignment matters:
+   \`\`\`
+   Name      Age   City
+   Alice     30    NYC
+   Bob       25    London
+   \`\`\`
+
+Keep responses concise. Messages over ~4000 chars will be split across multiple embeds.
+Use code blocks with language tags for syntax highlighting.`;
+  }
+
+  return `${commonGuidelines}
 
 Response Formatting — Telegraph-Aware Writing:
 Your responses are displayed via Telegram. Short responses render inline as MarkdownV2.
@@ -149,6 +195,7 @@ Semantic mappings for natural language Reddit queries:
 - "this week" → --sort top --time week
 - "this month" → --sort top --time month
 - "rising" → --sort rising`;
+}
 
 const REDDIT_VIDEO_TOOL_PROMPT = `
 
@@ -183,7 +230,16 @@ Reasoning Summary (required when enabled):
 - Do NOT reveal chain-of-thought, hidden reasoning, or sensitive tool outputs.
 - Skip the summary for very short acknowledgements or pure error messages.`;
 
-const SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}${REDDIT_VIDEO_TOOL_PROMPT}${MEDIUM_TOOL_PROMPT}${EXTRACT_TOOL_PROMPT}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
+function getSystemPrompt(platform: Platform = 'telegram'): string {
+  const base = getBaseSystemPrompt(platform);
+
+  if (platform === 'discord') {
+    // Discord prompt: no Telegram-specific tool prompts
+    return `${base}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
+  }
+
+  return `${base}${REDDIT_VIDEO_TOOL_PROMPT}${MEDIUM_TOOL_PROMPT}${EXTRACT_TOOL_PROMPT}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
+}
 
 /**
  * Strip the "Reasoning Summary" section from the end of a response
@@ -238,7 +294,7 @@ export async function sendToAgent(
   message: string,
   options: AgentOptions = {}
 ): Promise<AgentResponse> {
-  const { onProgress, onToolStart, onToolEnd, abortController, command, model } = options;
+  const { onProgress, onToolStart, onToolEnd, abortController, command, model, platform } = options;
 
   const session = sessionManager.getSession(chatId);
 
@@ -388,7 +444,7 @@ export async function sendToAgent(
       systemPrompt: {
         type: 'preset' as const,
         preset: 'claude_code' as const,
-        append: SYSTEM_PROMPT,
+        append: getSystemPrompt(platform),
       },
       settingSources: ['project', 'user'] as SettingSource[],
       model: effectiveModel,
