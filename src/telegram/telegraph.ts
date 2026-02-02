@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { isTelegraphEnabled } from './telegraph-settings.js';
 
 // Zod schema for Telegraph account file
 const telegraphAccountSchema = z.object({
@@ -78,11 +79,16 @@ export async function initTelegraph(): Promise<void> {
 
 /**
  * Check if content should use Telegraph (long content or has tables)
- * Returns false if TELEGRAPH_ENABLED is false in config
+ * Returns false if Telegraph is disabled globally or for this chat
  */
-export function shouldUseTelegraph(content: string): boolean {
-  // Check if Telegraph is enabled in config
+export function shouldUseTelegraph(content: string, chatId?: number): boolean {
+  // Check if Telegraph is enabled in config (global kill switch)
   if (!config.TELEGRAPH_ENABLED) {
+    return false;
+  }
+
+  // Check per-chat settings if chatId provided
+  if (chatId !== undefined && !isTelegraphEnabled(chatId)) {
     return false;
   }
 

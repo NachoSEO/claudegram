@@ -15,6 +15,8 @@ import {
   handleModeCallback,
   handleTTS,
   handleTTSCallback,
+  handleTelegraph,
+  handleTelegraphCallback,
   handleBotStatus,
   handleRestartBot,
   handleRestartCallback,
@@ -33,7 +35,6 @@ import {
   handleSessions,
   handleTeleport,
   handleFile,
-  handleTelegraph,
   handleReddit,
   handleVReddit,
   handleMedium,
@@ -188,6 +189,8 @@ export async function createBot(): Promise<Bot> {
       await handleTerminalUICallback(ctx);
     } else if (data.startsWith('tts:')) {
       await handleTTSCallback(ctx);
+    } else if (data.startsWith('telegraph:')) {
+      await handleTelegraphCallback(ctx);
     } else if (data.startsWith('clear:')) {
       await handleClearCallback(ctx);
     } else if (data.startsWith('project:')) {

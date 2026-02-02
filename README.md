@@ -149,7 +149,7 @@ Open your bot in Telegram → `/start`
 | `/vreddit` | Download Reddit-hosted videos |
 | `/medium` | Fetch Medium articles via Freedium |
 | `/file` | Download a project file |
-| `/telegraph` | View Markdown as Instant View page |
+| `/telegraph` | Toggle Instant View for long responses |
 
 ### Voice & TTS
 | Command | Description |
