@@ -125,6 +125,7 @@ export async function handleReddit(interaction: ChatInputCommandInteraction): Pr
 
     if (handled) return;
     handled = true;
+    collector.stop('handled');
 
     const action = i.customId.replace('reddit-', '');
     const doFile = action === 'file' || action === 'both';
@@ -206,8 +207,12 @@ export async function handleReddit(interaction: ChatInputCommandInteraction): Pr
 
           // Create a thread named after the Reddit content
           const threadTitle = extractThreadTitle(markdown, target);
-          const channel = interaction.channel as TextChannel;
-          const thread = await channel.threads.create({
+          const channel = interaction.channel;
+          if (!channel || !('threads' in channel)) {
+            await interaction.followUp({ content: 'Cannot create thread in this channel type.', ephemeral: true });
+            return;
+          }
+          const thread = await (channel as TextChannel).threads.create({
             name: threadTitle.slice(0, 100),
             autoArchiveDuration: 1440,
           });

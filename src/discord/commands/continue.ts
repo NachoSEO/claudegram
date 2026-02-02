@@ -25,5 +25,5 @@ export async function handleContinue(interaction: ChatInputCommandInteraction): 
     msg += `\nClaude session: \`${session.claudeSessionId.slice(0, 20)}...\``;
   }
 
-  await interaction.reply(msg);
+  await interaction.reply({ content: msg, ephemeral: true });
 }

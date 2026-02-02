@@ -29,6 +29,12 @@ export function createPlaybackResampler(): Resampler {
 
   let alive = true;
 
+  ffmpeg.on('error', (err) => {
+    console.error('[PlaybackResampler] ffmpeg spawn error:', err.message);
+    alive = false;
+    output.destroy(err);
+  });
+
   input.pipe(ffmpeg.stdin!);
   ffmpeg.stdout!.pipe(output);
 
@@ -78,6 +84,12 @@ export function createReceiveResampler(): ReceiveResampler {
   ], { stdio: ['pipe', 'pipe', 'inherit'] });
 
   let alive = true;
+
+  ffmpeg.on('error', (err) => {
+    console.error('[ReceiveResampler] ffmpeg spawn error:', err.message);
+    alive = false;
+    output.destroy(err);
+  });
 
   input.pipe(ffmpeg.stdin!);
   ffmpeg.stdout!.pipe(output);

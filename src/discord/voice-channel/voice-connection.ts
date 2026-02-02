@@ -53,6 +53,7 @@ export interface VoiceSessionState {
   channelId: string;
   textChannelId?: string;
   onTextMessage?: (text: string) => void;
+  endDebounceTimer?: ReturnType<typeof setTimeout>;
 }
 
 /** Mutable playback context shared across Gemini session reconnections. */
@@ -156,7 +157,6 @@ export async function joinAndConnect(
   //    micro-pauses mid-sentence, which cause false barge-ins that kill responses.
   const speakingUsers = new Set<string>();
   let activityActive = false;
-  let endDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   const ACTIVITY_END_DEBOUNCE_MS = 300;
 
   connection.receiver.speaking.on('start', (userId) => {
@@ -165,9 +165,9 @@ export async function joinAndConnect(
     subscribeToUser(currentState, userId);
 
     // Cancel any pending activityEnd — user resumed speaking
-    if (endDebounceTimer) {
-      clearTimeout(endDebounceTimer);
-      endDebounceTimer = null;
+    if (state.endDebounceTimer) {
+      clearTimeout(state.endDebounceTimer);
+      state.endDebounceTimer = undefined;
     }
 
     speakingUsers.add(userId);
@@ -187,9 +187,9 @@ export async function joinAndConnect(
     // Debounce: wait before sending activityEnd so micro-pauses in speech
     // don't trigger false barge-ins while Gemini is responding.
     if (speakingUsers.size === 0 && activityActive) {
-      if (endDebounceTimer) clearTimeout(endDebounceTimer);
-      endDebounceTimer = setTimeout(() => {
-        endDebounceTimer = null;
+      if (state.endDebounceTimer) clearTimeout(state.endDebounceTimer);
+      state.endDebounceTimer = setTimeout(() => {
+        state.endDebounceTimer = undefined;
         if (speakingUsers.size === 0 && activityActive) {
           console.log(`[Voice] activityEnd (user ${userId} stopped speaking)`);
           if (currentState.gemini.isOpen) {
@@ -369,7 +369,10 @@ async function attemptGeminiReconnect(
     state.gemini = newGemini;
   } catch (err: any) {
     console.error(`[Voice] Gemini reconnect attempt ${attempts} failed:`, err.message);
-    // The new session's onClose will trigger another attempt if under the limit
+    // connectGeminiSession threw before onClose could fire — explicitly retry
+    if (sessions.has(guildId) && attempts < MAX_RECONNECTS) {
+      attemptGeminiReconnect(guildId, player, ctx);
+    }
   }
 }
 
@@ -426,6 +429,10 @@ function subscribeToUser(state: VoiceSessionState, userId: string): void {
   // Pipe opus→decoder normally (decoder dies with the stream — that's fine).
   // Use { end: false } on decoder→resampler so the ffmpeg resampler survives.
   opusStream.pipe(decoder);
+  decoder.on('error', (err: Error) => {
+    console.error(`[Voice] Opus decoder error for ${userId}:`, err.message);
+    onStreamDeath();
+  });
   decoder.pipe(recvResampler.input, { end: false });
 
   // When the opus stream dies, just remove the subscription entry.
@@ -446,6 +453,12 @@ function subscribeToUser(state: VoiceSessionState, userId: string): void {
 function cleanupSession(guildId: string): void {
   const state = sessions.get(guildId);
   if (!state) return;
+
+  // Clear debounce timer to prevent it firing after cleanup
+  if (state.endDebounceTimer) {
+    clearTimeout(state.endDebounceTimer);
+    state.endDebounceTimer = undefined;
+  }
 
   // Remove from the map FIRST — if gemini.close() triggers an onClose
   // callback synchronously, attemptGeminiReconnect will check the map

@@ -23,7 +23,7 @@ export async function handleMessage(message: Message): Promise<void> {
   // Ignore bot messages
   if (message.author.bot) return;
 
-  const isMentioned = message.mentions.has(message.client.user!);
+  const isMentioned = message.client.user ? message.mentions.has(message.client.user) : false;
   const isThread =
     message.channel.type === ChannelType.PublicThread ||
     message.channel.type === ChannelType.PrivateThread;

@@ -65,12 +65,12 @@ export async function handleVReddit(interaction: ChatInputCommandInteraction): P
       }
     }
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Failed to download video.';
-    console.warn('[Discord/vReddit]', msg);
+    const rawMsg = error instanceof Error ? error.message : String(error);
+    console.warn('[Discord/vReddit]', rawMsg);
 
     try {
       if (interaction.deferred || interaction.replied) {
-        await interaction.editReply(`Error: ${msg}`);
+        await interaction.editReply('An error occurred while downloading the video.');
       }
     } catch { /* interaction expired */ }
   } finally {

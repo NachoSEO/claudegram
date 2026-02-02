@@ -41,16 +41,16 @@ async function handleJoin(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
+  if (!interaction.guild) {
+    await interaction.reply({ content: 'This command only works in a server.', ephemeral: true });
+    return;
+  }
+
   const member = interaction.member as GuildMember;
   const voiceChannel = member.voice.channel;
 
   if (!voiceChannel) {
     await interaction.reply({ content: 'Join a voice channel first.', ephemeral: true });
-    return;
-  }
-
-  if (!interaction.guild) {
-    await interaction.reply({ content: 'This command only works in a server.', ephemeral: true });
     return;
   }
 

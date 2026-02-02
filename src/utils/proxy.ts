@@ -43,9 +43,22 @@ export function getNextProxy(): string | null {
  * Create an undici ProxyAgent dispatcher for use with fetch().
  * Returns null if no proxies are available.
  */
+const ALLOWED_PROXY_PROTOCOLS = new Set(['http:', 'https:', 'socks4:', 'socks5:']);
+
 export function getProxyDispatcher(): ProxyAgent | null {
   const proxyUrl = getNextProxy();
   if (!proxyUrl) return null;
+
+  try {
+    const parsed = new URL(proxyUrl);
+    if (!ALLOWED_PROXY_PROTOCOLS.has(parsed.protocol)) {
+      console.warn(`[proxy] Rejected invalid proxy protocol: ${parsed.protocol}`);
+      return null;
+    }
+  } catch {
+    console.warn('[proxy] Rejected malformed proxy URL');
+    return null;
+  }
 
   return new ProxyAgent(proxyUrl);
 }
