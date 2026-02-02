@@ -8,7 +8,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "discord": "tsx watch src/discord-index.ts",
+    "discord:start": "node dist/discord-index.js"
   },
   "keywords": [
     "telegram",
@@ -24,6 +26,7 @@
     "@grammyjs/runner": "^2.0.3",
     "@types/turndown": "^5.0.6",
     "cheerio": "^1.2.0",
+    "discord.js": "^14.25.1",
     "dotenv": "^16.4.7",
     "grammy": "^1.31.3",
     "openai": "^6.16.0",
