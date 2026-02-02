@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { execFile } from 'child_process';
+import { resolveBin } from '../utils/resolve-bin.js';
 
 // ── OpenAI provider ────────────────────────────────────────────────
 
@@ -224,7 +225,7 @@ async function convertWavToOgg(wavBuffer: Buffer): Promise<Buffer> {
 
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile('ffmpeg', args, { timeout: 60_000 }, (error, _stdout, stderr) => {
+    execFile(resolveBin('ffmpeg'), args, { timeout: 60_000 }, (error, _stdout, stderr) => {
       if (error) {
         reject(new Error(`ffmpeg failed: ${(stderr || error.message).slice(0, 500)}`));
         return;

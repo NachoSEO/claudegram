@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { transcribeFile } from '../audio/transcribe.js';
 import { sanitizeError, sanitizePath } from '../utils/sanitize.js';
 import { isUrlAllowed } from '../utils/url-guard.js';
+import { resolveBin } from '../utils/resolve-bin.js';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -166,7 +167,7 @@ async function runYtDlp(
   const args = [...baseArgs, ...getCookieArgs()];
 
   try {
-    return await runCommand('yt-dlp', args, timeoutMs);
+    return await runCommand(resolveBin('yt-dlp'), args, timeoutMs);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : '';
 
@@ -175,7 +176,7 @@ async function runYtDlp(
       if (proxy) {
         console.log(`[extract] Retrying with proxy after: ${errMsg.slice(0, 100)}`);
         onRetry?.('\u{1F310} Retrying with proxy...');
-        return await runCommand('yt-dlp', [...args, '--proxy', proxy], timeoutMs);
+        return await runCommand(resolveBin('yt-dlp'), [...args, '--proxy', proxy], timeoutMs);
       }
     }
 
