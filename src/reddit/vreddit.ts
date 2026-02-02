@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { config } from '../config.js';
+import { resolveBin } from '../utils/resolve-bin.js';
 
 const USER_AGENT = 'claudegram/1.0';
 const DASH_FETCH_TIMEOUT_MS = 15000;
@@ -119,7 +120,7 @@ function extractExternalUrlFromHtml(html: string): string | null {
 async function resolveFinalUrl(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
-      'curl',
+      resolveBin('curl'),
       ['-sS', '-L', '-o', '/dev/null', '-w', '%{url_effective}',
        '-H', `User-Agent: ${USER_AGENT}`,
        '--connect-timeout', '15', '--max-time', '30',
@@ -139,7 +140,7 @@ async function resolveFinalUrl(url: string): Promise<string> {
 async function fetchHtml(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
-      'curl',
+      resolveBin('curl'),
       ['-sS', '-L', '-f',
        '-H', `User-Agent: ${USER_AGENT}`,
        '-b', 'over18=1',
@@ -270,7 +271,7 @@ function resolveDashBaseUrl(dashUrl: string, baseUrl: string): string {
 async function downloadFile(url: string, destPath: string, timeoutSec: number): Promise<number> {
   return await new Promise((resolve, reject) => {
     execFile(
-      'curl',
+      resolveBin('curl'),
       [
         '-sS',
         '-f',
@@ -303,7 +304,7 @@ async function downloadFile(url: string, destPath: string, timeoutSec: number): 
 async function downloadWithYtDlp(url: string, outputPath: string): Promise<number> {
   return new Promise((resolve, reject) => {
     execFile(
-      'yt-dlp',
+      resolveBin('yt-dlp'),
       [
         '-f', 'best[ext=mp4]/best',
         '--merge-output-format', 'mp4',
@@ -332,7 +333,7 @@ async function downloadWithYtDlp(url: string, outputPath: string): Promise<numbe
 async function mergeVideoAudio(videoPath: string, audioPath: string, outputPath: string): Promise<void> {
   return await new Promise((resolve, reject) => {
     execFile(
-      'ffmpeg',
+      resolveBin('ffmpeg'),
       ['-y', '-i', videoPath, '-i', audioPath, '-c', 'copy', '-movflags', '+faststart', outputPath],
       { timeout: FFMPEG_TIMEOUT_MS },
       (error, _stdout, stderr) => {
@@ -350,7 +351,7 @@ async function mergeVideoAudio(videoPath: string, audioPath: string, outputPath:
 async function getVideoDuration(filePath: string): Promise<number> {
   return await new Promise((resolve, reject) => {
     execFile(
-      'ffprobe',
+      resolveBin('ffprobe'),
       ['-i', filePath, '-show_entries', 'format=duration', '-v', 'quiet', '-of', 'csv=p=0'],
       { timeout: 15000 },
       (error, stdout, stderr) => {
@@ -373,7 +374,7 @@ async function getVideoDuration(filePath: string): Promise<number> {
 async function compressCrf(inputPath: string, outputPath: string): Promise<number> {
   return await new Promise((resolve, reject) => {
     execFile(
-      'ffmpeg',
+      resolveBin('ffmpeg'),
       [
         '-y', '-i', inputPath,
         '-c:v', 'libx264', '-crf', '28', '-preset', 'medium',
@@ -417,7 +418,7 @@ async function compressTwoPass(
   // Pass 1
   await new Promise<void>((resolve, reject) => {
     execFile(
-      'ffmpeg',
+      resolveBin('ffmpeg'),
       [
         '-y', '-i', inputPath,
         '-c:v', 'libx264', '-b:v', `${videoBitrateKbps}k`,
@@ -440,7 +441,7 @@ async function compressTwoPass(
   // Pass 2
   return await new Promise((resolve, reject) => {
     execFile(
-      'ffmpeg',
+      resolveBin('ffmpeg'),
       [
         '-y', '-i', inputPath,
         '-c:v', 'libx264', '-b:v', `${videoBitrateKbps}k`,
