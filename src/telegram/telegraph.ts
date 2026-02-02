@@ -2,6 +2,7 @@ import Telegraph from 'telegra.ph';
 import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
+import { config } from '../config.js';
 
 // Zod schema for Telegraph account file
 const telegraphAccountSchema = z.object({
@@ -77,8 +78,14 @@ export async function initTelegraph(): Promise<void> {
 
 /**
  * Check if content should use Telegraph (long content or has tables)
+ * Returns false if TELEGRAPH_ENABLED is false in config
  */
 export function shouldUseTelegraph(content: string): boolean {
+  // Check if Telegraph is enabled in config
+  if (!config.TELEGRAPH_ENABLED) {
+    return false;
+  }
+
   // Use Telegraph for long content
   if (content.length > TELEGRAPH_THRESHOLD) {
     return true;
@@ -421,5 +428,7 @@ export async function createTelegraphFromFile(filePath: string): Promise<string 
   }
 }
 
-// Initialize on module load
-initTelegraph().catch(console.error);
+// Initialize on module load (only if enabled)
+if (config.TELEGRAPH_ENABLED) {
+  initTelegraph().catch(console.error);
+}

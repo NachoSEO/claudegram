@@ -2151,17 +2151,26 @@ export async function executeMediumFetch(
       `${esc(preview)}\n\n` +
       `_${article.markdown.length} chars — choose an action:_`;
 
-    const msg = await ctx.reply(previewText, {
-      parse_mode: 'MarkdownV2',
-      reply_markup: {
-        inline_keyboard: [
+    // Build inline keyboard based on Telegraph availability
+    const inlineKeyboard = config.TELEGRAPH_ENABLED
+      ? [
           [
             { text: '📄 Telegraph', callback_data: 'medium:telegraph' },
             { text: '💾 Save .md', callback_data: 'medium:save' },
             { text: '📄💾 Both', callback_data: 'medium:both' },
           ],
-        ],
-      },
+        ]
+      : [
+          [
+            { text: '💬 Send to Chat', callback_data: 'medium:chat' },
+            { text: '💾 Save .md', callback_data: 'medium:save' },
+            { text: '💬💾 Both', callback_data: 'medium:chatboth' },
+          ],
+        ];
+
+    const msg = await ctx.reply(previewText, {
+      parse_mode: 'MarkdownV2',
+      reply_markup: { inline_keyboard: inlineKeyboard },
     });
 
     // Store result for callback handling
@@ -2206,7 +2215,8 @@ export async function handleMediumCallback(ctx: Context): Promise<void> {
   await ctx.answerCallbackQuery();
 
   const doTelegraph = action === 'telegraph' || action === 'both';
-  const doSave = action === 'save' || action === 'both';
+  const doChat = action === 'chat' || action === 'chatboth';
+  const doSave = action === 'save' || action === 'both' || action === 'chatboth';
 
   let telegraphUrl: string | null = null;
   let mdPath: string | null = null;
@@ -2229,6 +2239,9 @@ export async function handleMediumCallback(ctx: Context): Promise<void> {
     if (telegraphUrl) {
       resultText += `📄 [Open in Instant View](${esc(telegraphUrl)})\n`;
     }
+    if (doChat) {
+      resultText += `💬 Sending to chat\\.\\.\\.\n`;
+    }
     if (mdPath) {
       resultText += `💾 Markdown saved \\(${article.markdown.length} chars\\)`;
     }
@@ -2239,6 +2252,11 @@ export async function handleMediumCallback(ctx: Context): Promise<void> {
     } catch {
       // If edit fails (e.g. message too old), send new message
       await replyMd(ctx, resultText);
+    }
+
+    // Send content to chat if requested (inline messages)
+    if (doChat) {
+      await messageSender.sendMessage(ctx, article.markdown);
     }
 
     // Send .md file as document
