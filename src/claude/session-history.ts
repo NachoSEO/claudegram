@@ -130,12 +130,19 @@ class SessionHistory {
 
   getHistory(chatId: number, limit: number = 5): SessionHistoryEntry[] {
     const history = this.data.sessions[chatId] || [];
-    return history.slice(0, limit);
+    // Sort by most recently active first
+    return [...history]
+      .sort((a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime())
+      .slice(0, limit);
   }
 
   getLastSession(chatId: number): SessionHistoryEntry | undefined {
     const history = this.data.sessions[chatId];
-    return history?.[0];
+    if (!history || history.length === 0) return undefined;
+    // Return the most recently active session, not just the first in the array
+    return [...history].sort(
+      (a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime()
+    )[0];
   }
 
   getSessionByConversationId(

@@ -11,7 +11,15 @@ import { handleClear } from '../commands/clear.js';
 import { handleProject } from '../commands/project.js';
 import { handleModel } from '../commands/model.js';
 import { handleCommands } from '../commands/commands.js';
+import { handleReddit } from '../commands/reddit.js';
+import { handleVReddit } from '../commands/vreddit.js';
 import { handleAskClaude } from '../commands/ask-claude.js';
+import { handleContinue } from '../commands/continue.js';
+import { handleResume } from '../commands/resume.js';
+import { handleContext } from '../commands/context.js';
+import { handleTranscribe } from '../commands/transcribe.js';
+import { handleTTS } from '../commands/tts.js';
+import { handleVoice } from '../commands/voice.js';
 import { sanitizeError } from '../../utils/sanitize.js';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -58,6 +66,30 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         break;
       case 'commands':
         await handleCommands(command);
+        break;
+      case 'reddit':
+        await handleReddit(command);
+        break;
+      case 'vreddit':
+        await handleVReddit(command);
+        break;
+      case 'continue':
+        await handleContinue(command);
+        break;
+      case 'resume':
+        await handleResume(command);
+        break;
+      case 'context':
+        await handleContext(command);
+        break;
+      case 'transcribe':
+        await handleTranscribe(command);
+        break;
+      case 'tts':
+        await handleTTS(command);
+        break;
+      case 'voice':
+        await handleVoice(command);
         break;
       default:
         await command.reply({ content: `Unknown command: ${command.commandName}`, ephemeral: true });

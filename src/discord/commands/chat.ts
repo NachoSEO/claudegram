@@ -1,5 +1,8 @@
 import {
   ChatInputCommandInteraction,
+  ChannelType,
+  TextChannel,
+  EmbedBuilder,
 } from 'discord.js';
 import { discordChatId } from '../id-mapper.js';
 import { discordMessageSender } from '../message-sender.js';
@@ -42,7 +45,6 @@ async function streamResponse(
 
 export async function handleChat(interaction: ChatInputCommandInteraction): Promise<void> {
   const message = interaction.options.getString('message', true);
-  const channelId = interaction.channelId;
 
   // Session key uses the user's ID
   const chatId = discordChatId(interaction.user.id);
@@ -53,10 +55,40 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
     return;
   }
 
-  // Respond inline via the interaction (deferReply + editReply with embeds)
-  await discordMessageSender.startStreaming(interaction, channelId);
+  const isThread =
+    interaction.channel?.type === ChannelType.PublicThread ||
+    interaction.channel?.type === ChannelType.PrivateThread;
 
-  await queueRequest(chatId, message, async () => {
-    await streamResponse(chatId, channelId, message);
-  });
+  if (isThread) {
+    // Already in a thread — respond inline (current behavior)
+    const channelId = interaction.channelId;
+    await discordMessageSender.startStreaming(interaction, channelId);
+
+    await queueRequest(chatId, message, async () => {
+      await streamResponse(chatId, channelId, message);
+    });
+  } else {
+    // In a channel — create a thread, stream response there
+    await interaction.deferReply();
+
+    const threadTitle = `Claude: ${message.slice(0, 90)}`;
+    const channel = interaction.channel as TextChannel;
+
+    const thread = await channel.threads.create({
+      name: threadTitle.slice(0, 100),
+      autoArchiveDuration: 1440,
+    });
+
+    await interaction.editReply(`Thread created: ${thread.toString()}`);
+
+    // Send initial thinking message in thread, then stream there
+    const threadChannelId = thread.id;
+    const thinkingEmbed = new EmbedBuilder().setColor(0x5865F2).setDescription('**●○○** Processing');
+    const thinkingMsg = await thread.send({ embeds: [thinkingEmbed] });
+    await discordMessageSender.startStreamingFromExistingMessage(thinkingMsg, threadChannelId);
+
+    await queueRequest(chatId, message, async () => {
+      await streamResponse(chatId, threadChannelId, message);
+    });
+  }
 }

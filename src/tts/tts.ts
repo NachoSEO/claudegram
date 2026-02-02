@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { execFile } from 'child_process';
 import { resolveBin } from '../utils/resolve-bin.js';
+import { getProxyDispatcher } from '../utils/proxy.js';
 
 // ── OpenAI provider ────────────────────────────────────────────────
 
@@ -120,19 +121,36 @@ async function groqTTSSingle(text: string, voice: string): Promise<Buffer> {
     throw new Error('GROQ_API_KEY not configured.');
   }
 
-  const response = await fetch(GROQ_TTS_ENDPOINT, {
+  const payload = {
+    model: GROQ_TTS_MODEL,
+    input: text,
+    voice,
+    response_format: 'wav',
+  };
+
+  const fetchOpts: RequestInit = {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${config.GROQ_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      model: GROQ_TTS_MODEL,
-      input: text,
-      voice,
-      response_format: 'wav',
-    }),
-  });
+    body: JSON.stringify(payload),
+  };
+
+  let response = await fetch(GROQ_TTS_ENDPOINT, fetchOpts);
+
+  // On 403 (VPN/IP block), retry through residential proxy
+  if (response.status === 403) {
+    const dispatcher = getProxyDispatcher();
+    if (dispatcher) {
+      console.log('[TTS/Groq] Got 403 — retrying through residential proxy');
+      response = await fetch(GROQ_TTS_ENDPOINT, {
+        ...fetchOpts,
+        body: JSON.stringify(payload),
+        dispatcher,
+      } as RequestInit);
+    }
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');

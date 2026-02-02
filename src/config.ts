@@ -113,6 +113,8 @@ const envSchema = z.object({
     .string()
     .default('2000')
     .transform((val) => parseInt(val, 10)),
+  // Gemini (Live Audio)
+  GEMINI_API_KEY: z.string().optional(),
   // Voice transcription (Groq Whisper)
   GROQ_API_KEY: z.string().optional(),
   GROQ_TRANSCRIBE_PATH: z.string().default(''),
@@ -124,6 +126,10 @@ const envSchema = z.object({
     .string()
     .default('19')
     .transform((val) => parseInt(val, 10)),
+  VOICE_PROXY_ENABLED: z
+    .string()
+    .default('true')
+    .transform((val) => val.toLowerCase() === 'true'),
   VOICE_LANGUAGE: z.string().default('en'),
   VOICE_TIMEOUT_MS: z
     .string()

@@ -8,6 +8,8 @@ const COMMAND_LIST = [
   { name: '/clear', description: 'Clear conversation history (keeps session)' },
   { name: '/project', description: 'Set the working directory (dropdown if no path given)' },
   { name: '/model', description: 'Select the Claude model' },
+  { name: '/reddit', description: 'Fetch Reddit posts, subreddits, or user profiles' },
+  { name: '/vreddit', description: 'Download a Reddit video' },
   { name: '/commands', description: 'Show this list' },
   { name: 'Ask Claude', description: 'Right-click a message to analyze it (context menu)' },
 ];

@@ -28,6 +28,10 @@ const discordEnvSchema = z.object({
     .string()
     .default('1900')
     .transform((val) => parseInt(val, 10)),
+  DISCORD_VIDEO_MAX_SIZE_MB: z
+    .string()
+    .default('10')
+    .transform((val) => parseInt(val, 10)),
 });
 
 const parsed = discordEnvSchema.safeParse(process.env);

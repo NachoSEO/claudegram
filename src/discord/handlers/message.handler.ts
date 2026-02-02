@@ -1,5 +1,6 @@
 import {
   Message,
+  Attachment,
   ChannelType,
 } from 'discord.js';
 import { discordChatId } from '../id-mapper.js';
@@ -14,6 +15,8 @@ import {
   setAbortController,
 } from '../../claude/request-queue.js';
 import { sanitizeError } from '../../utils/sanitize.js';
+import { handleVoiceMessage } from './voice.handler.js';
+import { maybeSendDiscordVoiceReply } from '../voice-reply.js';
 
 export async function handleMessage(message: Message): Promise<void> {
   // Ignore bot messages
@@ -30,6 +33,15 @@ export async function handleMessage(message: Message): Promise<void> {
   // Auth check
   if (!isAuthorizedMessage(message)) {
     await message.reply('You are not authorized to use this bot.');
+    return;
+  }
+
+  // Voice message detection — audio attachment with duration (Discord voice messages)
+  const voiceAttachment = message.attachments.find(
+    (a: Attachment) => a.contentType?.startsWith('audio/') && a.duration != null
+  );
+  if (voiceAttachment) {
+    await handleVoiceMessage(message, voiceAttachment, isThread, isMentioned);
     return;
   }
 
@@ -66,7 +78,13 @@ export async function handleMessage(message: Message): Promise<void> {
 
   try {
     await queueRequest(chatId, text, async () => {
-      await discordMessageSender.startStreamingFromMessage(message, channelId);
+      // In a thread without @mention: regular message (no inline reply)
+      // Otherwise (@mention or channel message): inline reply
+      if (isThread && !isMentioned) {
+        await discordMessageSender.startStreamingInChannel(message.channel as any, channelId);
+      } else {
+        await discordMessageSender.startStreamingFromMessage(message, channelId);
+      }
 
       const abortController = new AbortController();
       setAbortController(chatId, abortController);
@@ -87,19 +105,18 @@ export async function handleMessage(message: Message): Promise<void> {
         });
 
         await discordMessageSender.finishStreaming(channelId, response.text);
+        await maybeSendDiscordVoiceReply(message, response.text);
 
-        // Remove hourglass, add checkmark
+        // Remove hourglass on completion
         try {
           await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
-          await message.react('\u2705');
         } catch { /* ignore reaction errors */ }
       } catch (error) {
         await discordMessageSender.cancelStreaming(channelId);
 
-        // Remove hourglass, add cross mark
+        // Remove hourglass on error
         try {
           await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
-          await message.react('\u274C');
         } catch { /* ignore reaction errors */ }
 
         throw error;

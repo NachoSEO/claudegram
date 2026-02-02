@@ -98,22 +98,27 @@ Discord does NOT support:
 - TABLES — pipe-delimited markdown tables (|col|col|) will NOT render. They show as ugly raw text. NEVER use markdown tables.
 
 Instead of tables, use these alternatives (in order of preference):
-1. Bullet lists with bold labels — best for key-value data:
+
+1. ANSI-colored code block tables — best for tabular/CSV-like data with rows and columns:
+   \`\`\`ansi
+   \\u001b[1;33m Name          Age   City      \\u001b[0m
+   \\u001b[0;36m──────────────────────────────\\u001b[0m
+    Alice          30    NYC
+    Bob            25    London
+    Charlie        35    Tokyo
+   \`\`\`
+   Use \\u001b[1;33m for bold yellow headers, \\u001b[0;36m for cyan separators, \\u001b[0m to reset.
+   Always pad columns with spaces so they align in monospace.
+
+2. Bullet lists with bold labels — best for key-value pairs (not multi-row data):
    - **Name**: Alice
    - **Age**: 30
    - **City**: NYC
 
-2. Nested lists — best for grouped data:
+3. Nested lists — best for grouped/categorized data:
    - **Frontend**
      - React 18
      - TypeScript
-
-3. Preformatted code blocks — for data where alignment matters:
-   \`\`\`
-   Name      Age   City
-   Alice     30    NYC
-   Bob       25    London
-   \`\`\`
 
 Keep responses concise. Messages over ~4000 chars will be split across multiple embeds.
 Use code blocks with language tags for syntax highlighting.`;

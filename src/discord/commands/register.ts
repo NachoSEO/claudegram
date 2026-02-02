@@ -50,6 +50,109 @@ const commands = [
     .setName('commands')
     .setDescription('List all available commands'),
 
+  new SlashCommandBuilder()
+    .setName('reddit')
+    .setDescription('Fetch Reddit posts, subreddits, or user profiles')
+    .addStringOption(option =>
+      option.setName('target')
+        .setDescription('Subreddit (r/ClaudeAI), post URL, user (u/name), or post ID')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option.setName('sort')
+        .setDescription('Sort order (hot, new, top, rising)')
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName('limit')
+        .setDescription('Number of posts to fetch (default 10)')
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('vreddit')
+    .setDescription('Download a Reddit video')
+    .addStringOption(option =>
+      option.setName('url')
+        .setDescription('Reddit post URL containing a video')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('continue')
+    .setDescription('Resume the most recent session'),
+
+  new SlashCommandBuilder()
+    .setName('resume')
+    .setDescription('Pick a past session to resume'),
+
+  new SlashCommandBuilder()
+    .setName('context')
+    .setDescription('Show Claude context window usage'),
+
+  new SlashCommandBuilder()
+    .setName('transcribe')
+    .setDescription('Transcribe an audio file to text')
+    .addAttachmentOption(option =>
+      option.setName('file')
+        .setDescription('Audio or video file to transcribe')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('tts')
+    .setDescription('Text-to-speech tools')
+    .addSubcommand(sub =>
+      sub.setName('speak')
+        .setDescription('Convert text to speech')
+        .addStringOption(opt =>
+          opt.setName('text')
+            .setDescription('Text to speak')
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName('on')
+        .setDescription('Enable TTS auto-reply on agent responses')
+    )
+    .addSubcommand(sub =>
+      sub.setName('off')
+        .setDescription('Disable TTS auto-reply')
+    )
+    .addSubcommand(sub =>
+      sub.setName('voice')
+        .setDescription('Choose your default TTS voice')
+    )
+    .addSubcommand(sub =>
+      sub.setName('status')
+        .setDescription('Show current TTS settings')
+    ),
+
+  new SlashCommandBuilder()
+    .setName('voice')
+    .setDescription('Gemini Live Audio in voice channels')
+    .addSubcommand(sub =>
+      sub.setName('join')
+        .setDescription('Join your voice channel with Gemini Live')
+    )
+    .addSubcommand(sub =>
+      sub.setName('leave')
+        .setDescription('Leave the voice channel')
+    )
+    .addSubcommand(sub =>
+      sub.setName('say')
+        .setDescription('Send a text prompt to Gemini (responds with voice)')
+        .addStringOption(opt =>
+          opt.setName('text')
+            .setDescription('Text to send to Gemini')
+            .setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName('status')
+        .setDescription('Show voice session status')
+    ),
+
   new ContextMenuCommandBuilder()
     .setName('Ask Claude')
     .setType(ApplicationCommandType.Message),
