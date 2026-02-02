@@ -94,7 +94,7 @@ async function handleSpeak(interaction: ChatInputCommandInteraction): Promise<vo
       const audioBuffer = await generateSpeech(text, voice);
       const ext = config.TTS_PROVIDER === 'groq' ? 'ogg'
         : config.TTS_RESPONSE_FORMAT === 'opus' ? 'ogg'
-        : config.TTS_RESPONSE_FORMAT;
+        : config.TTS_RESPONSE_FORMAT || 'mp3';
 
       const attachment = new AttachmentBuilder(audioBuffer, { name: `tts_${voice}.${ext}` });
       await interaction.followUp({ files: [attachment] });

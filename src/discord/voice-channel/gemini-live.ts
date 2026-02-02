@@ -242,7 +242,7 @@ async function handleToolCall(
       functionResponses.push({
         id: fc.id,
         name: fc.name,
-        response: { result: 'ok' },
+        response: { result: `Tool '${fc.name}' handled by provider or not implemented` },
       });
     }
   }

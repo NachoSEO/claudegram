@@ -1,3 +1,4 @@
+import { evaluate } from 'mathjs';
 import type { GeminiTool } from './gemini-live.js';
 
 /**
@@ -47,8 +48,8 @@ const rollDice: GeminiTool = {
     },
   },
   execute: async (args) => {
-    const sides = args.sides ?? 6;
-    const count = args.count ?? 1;
+    const sides = Math.max(2, Math.min(Math.floor(Number(args.sides) || 6), 1000));
+    const count = Math.max(1, Math.min(Math.floor(Number(args.count) || 1), 100));
     const rolls = Array.from({ length: count }, () =>
       Math.floor(Math.random() * sides) + 1,
     );
@@ -82,26 +83,13 @@ const doMath: GeminiTool = {
     required: ['expression'],
   },
   execute: async (args) => {
-    // Simple safe math evaluation — only allows numbers, operators, parens, and Math functions
     const expr = String(args.expression);
-    const sanitized = expr.replace(/[^0-9+\-*/().,%^ sqrtabceilflooroundlogpowmin max PI E]/g, '');
     try {
-      // Replace common patterns before eval
-      const prepared = sanitized
+      // Preprocess natural language patterns before mathjs evaluation
+      const prepared = expr
         .replace(/(\d+)%\s*of\s*(\d+)/gi, '($1/100)*$2')
-        .replace(/sqrt/g, 'Math.sqrt')
-        .replace(/abs/g, 'Math.abs')
-        .replace(/ceil/g, 'Math.ceil')
-        .replace(/floor/g, 'Math.floor')
-        .replace(/round/g, 'Math.round')
-        .replace(/log/g, 'Math.log')
-        .replace(/pow/g, 'Math.pow')
-        .replace(/min/g, 'Math.min')
-        .replace(/max/g, 'Math.max')
-        .replace(/PI/g, 'Math.PI')
-        .replace(/\^/g, '**');
-      // eslint-disable-next-line no-eval
-      const result = Function(`"use strict"; return (${prepared})`)();
+        .replace(/\^/g, '^'); // mathjs uses ^ for power natively
+      const result = evaluate(prepared);
       return { expression: expr, result: Number(result) };
     } catch {
       return { expression: expr, error: 'Could not evaluate expression' };

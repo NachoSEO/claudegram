@@ -78,9 +78,13 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
     await interaction.deferReply();
 
     const threadTitle = `Claude: ${message.slice(0, 90)}`;
-    const channel = interaction.channel as TextChannel;
+    const channel = interaction.channel;
+    if (!channel || !('threads' in channel)) {
+      await interaction.editReply('Cannot create thread in this channel type.');
+      return;
+    }
 
-    const thread = await channel.threads.create({
+    const thread = await (channel as TextChannel).threads.create({
       name: threadTitle.slice(0, 100),
       autoArchiveDuration: 1440,
     });
