@@ -177,8 +177,13 @@ export async function joinAndConnect(
 
     speakingUsers.add(userId);
     if (!activityActive && currentState.gemini.isOpen) {
-      console.log(`[Voice] activityStart (user ${userId} began speaking)`);
-      currentState.gemini.sendActivityStart();
+      // Look up the speaker's display name
+      const guild = channel.guild;
+      const member = guild.members.cache.get(userId);
+      const speakerName = member?.displayName ?? member?.user.username;
+
+      console.log(`[Voice] activityStart (user ${userId} / ${speakerName ?? 'unknown'} began speaking)`);
+      currentState.gemini.sendActivityStart(speakerName);
       activityActive = true;
     }
   });
@@ -245,6 +250,15 @@ export async function disconnect(guildId: string): Promise<void> {
   } catch { /* already destroyed */ }
 }
 
+/**
+ * Disconnect all active voice sessions. Used for graceful shutdown.
+ */
+export async function disconnectAll(): Promise<void> {
+  const guildIds = [...sessions.keys()];
+  console.log(`[Voice] Disconnecting ${guildIds.length} active session(s)...`);
+  await Promise.all(guildIds.map((guildId) => disconnect(guildId)));
+}
+
 // ── Gemini session factory (used for initial connect + reconnect) ────
 
 async function connectGeminiSession(
@@ -260,6 +274,9 @@ async function connectGeminiSession(
   const channelId = voiceCtx?.channelId ?? state?.channelId;
   const textChannelId = voiceCtx?.textChannelId ?? state?.textChannelId;
   const client = getDiscordClient();
+
+  console.log(`[Voice] Building tools — client=${!!client}, channelId=${channelId}, textChannelId=${textChannelId}`);
+
   const discordTools = (client && channelId)
     ? createDiscordVoiceTools({
         client,
@@ -269,6 +286,8 @@ async function connectGeminiSession(
       })
     : [];
   const allTools = [...voiceTools, ...discordTools];
+
+  console.log(`[Voice] Tools registered: ${allTools.map(t => t.name).join(', ')} (${allTools.length} total)`);
 
   return createGeminiLiveSession({
     onAudio: (pcmBuffer) => {

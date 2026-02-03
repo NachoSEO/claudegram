@@ -1,6 +1,7 @@
 import { createDiscordBot } from './discord/discord-bot.js';
 import { registerCommands } from './discord/commands/register.js';
 import { discordConfig } from './discord/discord-config.js';
+import { disconnectAll } from './discord/voice-channel/voice-connection.js';
 
 async function main() {
   console.log('Starting Claudegram Discord bot...');
@@ -18,6 +19,10 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('\nShutting down Discord bot...');
+
+    // Gracefully disconnect all voice sessions first (closes Gemini, kills ffmpeg cleanly)
+    await disconnectAll();
+
     client.destroy();
     process.exit(0);
   };

@@ -26,8 +26,8 @@ export interface GeminiLiveSession {
   sendText: (text: string) => void;
   /** Send raw PCM audio (16kHz mono s16le) from the user's mic. */
   sendAudio: (pcm16kBuffer: Buffer) => void;
-  /** Signal that a user started speaking (manual VAD). */
-  sendActivityStart: () => void;
+  /** Signal that a user started speaking (manual VAD). Optionally include speaker name. */
+  sendActivityStart: (speakerName?: string) => void;
   /** Signal that a user stopped speaking (manual VAD). */
   sendActivityEnd: () => void;
   /** Close the session. */
@@ -58,7 +58,7 @@ export interface VoiceToolContext {
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const MODEL = 'gemini-2.5-flash-preview-native-audio-dialog';
+const MODEL = 'gemini-2.5-flash-native-audio-latest';
 
 const SYSTEM_INSTRUCTION = `You are BigBroDoe, a helpful and chill voice assistant hanging out in a Discord voice channel.
 Keep responses concise and conversational — you're speaking out loud, not writing an essay.
@@ -214,8 +214,15 @@ export async function createGeminiLiveSession(
       });
     },
 
-    sendActivityStart: () => {
+    sendActivityStart: (speakerName?: string) => {
       if (!isOpen) return;
+      // If we know who's speaking, tell Gemini before sending activityStart
+      if (speakerName) {
+        session.sendClientContent({
+          turns: [{ role: 'user', parts: [{ text: `[${speakerName} is now speaking]` }] }],
+          turnComplete: false,
+        });
+      }
       (session as any).sendRealtimeInput({ activityStart: {} });
     },
 

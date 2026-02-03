@@ -1,5 +1,29 @@
-import { ChannelType, PermissionsBitField, type TextChannel } from 'discord.js';
+import { ChannelType, PermissionsBitField, EmbedBuilder, type TextChannel, type ThreadChannel } from 'discord.js';
+import { GoogleGenAI } from '@google/genai';
+import { config } from '../../config.js';
 import type { GeminiTool, VoiceToolContext } from './gemini-live.js';
+
+// Lazily-initialized GoogleGenAI client for tools that call the text API.
+let cachedTextAI: GoogleGenAI | null = null;
+function getTextAI(): GoogleGenAI {
+  if (!cachedTextAI) {
+    if (!config.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+    cachedTextAI = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
+  }
+  return cachedTextAI;
+}
+
+const RESEARCH_TIMEOUT_MS = 30_000;
+
+/** Check if channel is sendable (text channel or thread) */
+function isTextBasedChannel(channel: any): channel is TextChannel | ThreadChannel {
+  return channel && (
+    channel.type === ChannelType.GuildText ||
+    channel.type === ChannelType.PublicThread ||
+    channel.type === ChannelType.PrivateThread ||
+    channel.type === ChannelType.AnnouncementThread
+  );
+}
 
 /**
  * Creates Discord-aware voice tools that require access to the Discord client
@@ -27,11 +51,11 @@ export function createDiscordVoiceTools(ctx: VoiceToolContext): GeminiTool[] {
       execute: async (args) => {
         const count = Math.max(1, Math.min(Math.floor(Number(args.count) || 10), 50));
         const channel = ctx.client.channels.cache.get(ctx.textChannelId!);
-        if (!channel || channel.type !== ChannelType.GuildText) {
+        if (!isTextBasedChannel(channel)) {
           return { error: 'Text channel not found or not a text channel.' };
         }
         try {
-          const messages = await (channel as TextChannel).messages.fetch({ limit: count });
+          const messages = await channel.messages.fetch({ limit: count });
           const result = messages
             .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
             .map((m) => ({
@@ -68,13 +92,13 @@ export function createDiscordVoiceTools(ctx: VoiceToolContext): GeminiTool[] {
         const message = String(args.message).trim().slice(0, 2000);
         if (!message) return { error: 'Message cannot be empty.' };
         const channel = ctx.client.channels.cache.get(ctx.textChannelId!);
-        if (!channel || channel.type !== ChannelType.GuildText) {
+        if (!isTextBasedChannel(channel)) {
           return { error: 'Text channel not found or not a text channel.' };
         }
         try {
-          await (channel as TextChannel).send({
+          await channel.send({
             content: message,
-            allowedMentions: { parse: [] },
+            allowedMentions: { parse: ['users'] }, // Allow @user mentions, block @everyone/@here
           });
           return { success: true, sent: message };
         } catch (err: any) {
@@ -152,6 +176,84 @@ export function createDiscordVoiceTools(ctx: VoiceToolContext): GeminiTool[] {
       }
     },
   });
+
+  // ── deep_research ──────────────────────────────────────────────────
+  // Discord-aware version that posts results to the text channel
+  if (ctx.textChannelId) {
+    tools.push({
+      name: 'deep_research',
+      description:
+        'Perform thorough research on a topic using Google Search and post the full report to the text channel. Use for questions that need up-to-date info, detailed answers, gaming strategies, news, or anything requiring web search. Runs in the background — the conversation can continue while research is happening.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'The research question or topic to investigate.',
+          },
+        },
+        required: ['query'],
+      },
+      behavior: 'NON_BLOCKING',
+      execute: async (args) => {
+        const query = String(args.query);
+        if (!config.GEMINI_API_KEY) {
+          return { error: 'GEMINI_API_KEY not configured for research.' };
+        }
+
+        const channel = ctx.client.channels.cache.get(ctx.textChannelId!);
+        if (!isTextBasedChannel(channel)) {
+          return { error: 'Text channel not found for posting research results.' };
+        }
+
+        try {
+          const ai = getTextAI();
+          const research = ai.models.generateContent({
+            model: 'gemini-2.0-flash',
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: `Research this topic thoroughly and provide a concise, informative summary:\n\n${query}` }],
+              },
+            ],
+            config: {
+              tools: [{ googleSearch: {} }],
+            },
+          });
+
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Research timed out after 30s')), RESEARCH_TIMEOUT_MS),
+          );
+
+          const response = await Promise.race([research, timeout]);
+          const text = response.text ?? '';
+          const capped = text.length > 4000 ? text.slice(0, 4000) + '...' : text;
+
+          // Post the research as an embed to the text channel
+          const embed = new EmbedBuilder()
+            .setTitle(`🔍 Research: ${query.slice(0, 200)}`)
+            .setDescription(capped)
+            .setColor(0x4285f4) // Google blue
+            .setFooter({ text: 'Powered by Gemini 2.0 Flash + Google Search' })
+            .setTimestamp();
+
+          await channel.send({ embeds: [embed] });
+
+          // Return a brief summary for Gemini to speak
+          const briefSummary = capped.length > 500 ? capped.slice(0, 500) + '...' : capped;
+          return {
+            query,
+            posted: true,
+            summary: briefSummary,
+            instruction: 'The full research report has been posted in the text channel. Give a brief verbal summary of the key points.',
+          };
+        } catch (err: any) {
+          console.error('[VoiceTools] deep_research failed:', err.message);
+          return { query, error: `Research failed: ${err.message}` };
+        }
+      },
+    });
+  }
 
   return tools;
 }
