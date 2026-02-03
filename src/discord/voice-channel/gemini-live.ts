@@ -1,4 +1,5 @@
 import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai';
+import type { Client } from 'discord.js';
 import { config } from '../../config.js';
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -43,18 +44,38 @@ export interface GeminiTool {
   parameters: Record<string, any>;
   /** Execute the tool and return a result (sent back to Gemini). */
   execute: (args: Record<string, any>) => Promise<any>;
+  /** Tool execution behavior: BLOCKING pauses audio, NON_BLOCKING lets conversation continue. */
+  behavior?: 'BLOCKING' | 'NON_BLOCKING';
+}
+
+/** Context passed to Discord-aware voice tools so they can interact with the server. */
+export interface VoiceToolContext {
+  client: Client;
+  guildId: string;
+  channelId: string;
+  textChannelId?: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
+const MODEL = 'gemini-2.5-flash-preview-native-audio-dialog';
 
-const SYSTEM_INSTRUCTION = `You are a helpful, friendly voice assistant in a Discord voice channel.
+const SYSTEM_INSTRUCTION = `You are BigBroDoe, a helpful and chill voice assistant hanging out in a Discord voice channel.
 Keep responses concise and conversational — you're speaking out loud, not writing an essay.
 If someone asks a factual question, use Google Search to find accurate answers.
-You have access to tools — use them when relevant (e.g. checking the time, rolling dice, doing math).
+
+You have access to tools — use them when relevant:
+- Time, dice, math, coin flips for quick queries
+- read_chat to see what's happening in the text channel
+- send_message to post messages to the text channel
+- kick_from_voice to remove someone from the voice channel (only when asked)
+- translate to help with translations — you can speak the translated text aloud in the target language
+- deep_research for thorough research on any topic (runs in the background)
+
 When you use a tool, tell the user the result naturally in speech.
-Be natural, use casual language, and avoid overly formal or verbose responses.`;
+Be natural, use casual language, and match the energy of the conversation.
+You can sense tone and emotion — adapt your responses accordingly.
+In group conversations, only speak when addressed or when you have something genuinely useful to add.`;
 
 // ── Session factory ──────────────────────────────────────────────────
 
@@ -66,18 +87,23 @@ export async function createGeminiLiveSession(
     throw new Error('GEMINI_API_KEY not configured.');
   }
 
-  const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
+  const ai = new GoogleGenAI({
+    apiKey: config.GEMINI_API_KEY,
+    httpOptions: { apiVersion: 'v1alpha' },
+  });
 
   // Build a lookup map and Gemini function declarations from tools
   const toolMap = new Map<string, GeminiTool>();
   const functionDeclarations: any[] = [];
   for (const tool of tools) {
     toolMap.set(tool.name, tool);
-    functionDeclarations.push({
+    const decl: any = {
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
-    });
+    };
+    if (tool.behavior) decl.behavior = tool.behavior;
+    functionDeclarations.push(decl);
   }
 
   const configTools: any[] = [{ googleSearch: {} }];
@@ -93,6 +119,8 @@ export async function createGeminiLiveSession(
       responseModalities: [Modality.AUDIO],
       systemInstruction: SYSTEM_INSTRUCTION,
       tools: configTools,
+      enableAffectiveDialog: true,
+      proactivity: { proactiveAudio: true },
       // Disable Gemini's built-in VAD — we drive activity detection from
       // Discord's speaking events (activityStart / activityEnd) so the
       // model gets clean, precise speech boundaries instead of trying to
