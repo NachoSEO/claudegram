@@ -79,7 +79,7 @@ async function handleJoin(interaction: ChatInputCommandInteraction): Promise<voi
     const embed = new EmbedBuilder()
       .setColor(0x57F287) // Green
       .setDescription(`Joined **${voiceChannel.name}** with Gemini Live Audio.\nSpeak in the voice channel or use \`/voice say\` to send text.`)
-      .setFooter({ text: 'Powered by Gemini 2.5 Flash Native Audio' });
+      .setFooter({ text: 'Powered by Gemini 2.5 Flash Dialog (v1alpha)' });
 
     await interaction.editReply({ embeds: [embed] });
   } catch (error) {
@@ -160,7 +160,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
       { name: 'Gemini', value: geminiStatus, inline: true },
       { name: 'Active Listeners', value: String(listeners), inline: true },
     )
-    .setFooter({ text: 'gemini-2.5-flash-native-audio' });
+    .setFooter({ text: 'gemini-2.5-flash-dialog (v1alpha)' });
 
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }

@@ -17,6 +17,8 @@ import { createRequire } from 'node:module';
 import { createPlaybackResampler, createReceiveResampler, type Resampler, type ReceiveResampler } from './audio-pipeline.js';
 import { createGeminiLiveSession, type GeminiLiveSession } from './gemini-live.js';
 import { voiceTools } from './voice-tools.js';
+import { createDiscordVoiceTools } from './discord-voice-tools.js';
+import { getDiscordClient } from '../discord-bot.js';
 
 // prism-media is CJS-only — use createRequire for ESM compat
 const require = createRequire(import.meta.url);
@@ -132,7 +134,10 @@ export async function joinAndConnect(
   player.play(resource);
 
   // 3) Connect to Gemini Live
-  const gemini = await connectGeminiSession(guildId, player, ctx);
+  const gemini = await connectGeminiSession(guildId, player, ctx, {
+    channelId: channel.id,
+    textChannelId: opts?.textChannelId,
+  });
 
   const state: VoiceSessionState = {
     connection,
@@ -246,7 +251,25 @@ async function connectGeminiSession(
   guildId: string,
   player: AudioPlayer,
   ctx: PlaybackCtx,
+  voiceCtx?: { channelId: string; textChannelId?: string },
 ): Promise<GeminiLiveSession> {
+  // Build Discord-aware tools if we have client + channel context.
+  // voiceCtx is passed directly on initial connect (before sessions map is populated)
+  // and derived from the sessions map on reconnect.
+  const state = sessions.get(guildId);
+  const channelId = voiceCtx?.channelId ?? state?.channelId;
+  const textChannelId = voiceCtx?.textChannelId ?? state?.textChannelId;
+  const client = getDiscordClient();
+  const discordTools = (client && channelId)
+    ? createDiscordVoiceTools({
+        client,
+        guildId,
+        channelId,
+        textChannelId,
+      })
+    : [];
+  const allTools = [...voiceTools, ...discordTools];
+
   return createGeminiLiveSession({
     onAudio: (pcmBuffer) => {
       // If the player went Idle (stream drained between turns) or the
@@ -315,7 +338,7 @@ async function connectGeminiSession(
       const st = sessions.get(guildId);
       st?.onTextMessage?.(text);
     },
-  }, voiceTools);
+  }, allTools);
 }
 
 // ── Gemini auto-reconnect ────────────────────────────────────────────
