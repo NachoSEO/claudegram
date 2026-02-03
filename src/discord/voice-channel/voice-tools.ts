@@ -1,19 +1,5 @@
-import { GoogleGenAI } from '@google/genai';
 import { evaluate } from 'mathjs';
-import { config } from '../../config.js';
 import type { GeminiTool } from './gemini-live.js';
-
-// Lazily-initialized GoogleGenAI client for tools that call the text API (e.g. deep_research).
-let cachedTextAI: GoogleGenAI | null = null;
-function getTextAI(): GoogleGenAI {
-  if (!cachedTextAI) {
-    if (!config.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
-    cachedTextAI = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
-  }
-  return cachedTextAI;
-}
-
-const RESEARCH_TIMEOUT_MS = 30_000;
 
 /**
  * Tools available to the Gemini Live voice agent.
@@ -146,57 +132,6 @@ const translate: GeminiTool = {
   },
 };
 
-const deepResearch: GeminiTool = {
-  name: 'deep_research',
-  description:
-    'Perform thorough research on a topic using Google Search. Use for questions that need up-to-date info, detailed answers, gaming strategies, news, or anything requiring web search. Runs in the background — the conversation can continue while research is happening.',
-  parameters: {
-    type: 'object',
-    properties: {
-      query: {
-        type: 'string',
-        description: 'The research question or topic to investigate.',
-      },
-    },
-    required: ['query'],
-  },
-  behavior: 'NON_BLOCKING',
-  execute: async (args) => {
-    const query = String(args.query);
-    if (!config.GEMINI_API_KEY) {
-      return { error: 'GEMINI_API_KEY not configured for research.' };
-    }
-
-    try {
-      const ai = getTextAI();
-      const research = ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: `Research this topic thoroughly and provide a concise, informative summary:\n\n${query}` }],
-          },
-        ],
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
-
-      const timeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Research timed out after 30s')), RESEARCH_TIMEOUT_MS),
-      );
-
-      const response = await Promise.race([research, timeout]);
-      const text = response.text ?? '';
-      const capped = text.length > 3000 ? text.slice(0, 3000) + '...' : text;
-      return { query, result: capped };
-    } catch (err: any) {
-      console.error('[VoiceTools] deep_research failed:', err.message);
-      return { query, error: `Research failed: ${err.message}` };
-    }
-  },
-};
-
 /** All voice tools — pass this array to createGeminiLiveSession. */
 export const voiceTools: GeminiTool[] = [
   getCurrentTime,
@@ -204,5 +139,4 @@ export const voiceTools: GeminiTool[] = [
   coinFlip,
   doMath,
   translate,
-  deepResearch,
 ];
