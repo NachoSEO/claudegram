@@ -157,13 +157,18 @@ function runCommand(
  * Run a yt-dlp command with automatic proxy fallback.
  * First tries without proxy. If it fails with an IP/auth error and proxies
  * are available, retries once through a residential proxy.
+ *
+ * The URL is passed separately and placed after '--' to prevent URL injection
+ * attacks where a malicious URL like '--version' could be interpreted as a flag.
  */
 async function runYtDlp(
   baseArgs: string[],
+  url: string,
   timeoutMs: number,
   onRetry?: (msg: string) => void
 ): Promise<{ stdout: string; stderr: string }> {
-  const args = [...baseArgs, ...getCookieArgs()];
+  // Add '--' separator before URL to prevent injection attacks
+  const args = [...baseArgs, ...getCookieArgs(), '--', url];
 
   try {
     return await runCommand('yt-dlp', args, timeoutMs);
@@ -175,7 +180,7 @@ async function runYtDlp(
       if (proxy) {
         console.log(`[extract] Retrying with proxy after: ${errMsg.slice(0, 100)}`);
         onRetry?.('\u{1F310} Retrying with proxy...');
-        return await runCommand('yt-dlp', [...args, '--proxy', proxy], timeoutMs);
+        return await runCommand('yt-dlp', [...baseArgs, ...getCookieArgs(), '--proxy', proxy, '--', url], timeoutMs);
       }
     }
 
@@ -197,8 +202,7 @@ async function getVideoMeta(url: string, onRetry?: (msg: string) => void): Promi
       '--print', '%(title)s\n%(duration)s',
       '--no-playlist',
       '--socket-timeout', '15',
-      url,
-    ], 30_000, onRetry);
+    ], url, 30_000, onRetry);
 
     const lines = stdout.trim().split('\n');
     const title = lines[0] || 'Untitled';
@@ -227,8 +231,7 @@ async function downloadAudio(
     '--socket-timeout', '30',
     '--retries', '3',
     '--no-warnings',
-    url,
-  ], YTDLP_TIMEOUT_MS, onRetry);
+  ], url, YTDLP_TIMEOUT_MS, onRetry);
 
   const files = fs.readdirSync(outputDir).filter(f => f.startsWith('audio.'));
   if (files.length === 0) {
@@ -255,8 +258,7 @@ async function downloadVideo(
     '--retries', '3',
     '--no-warnings',
     '--max-filesize', `${TELEGRAM_VIDEO_MAX_MB}M`,
-    url,
-  ], YTDLP_TIMEOUT_MS, onRetry);
+  ], url, YTDLP_TIMEOUT_MS, onRetry);
 
   const files = fs.readdirSync(outputDir).filter(f => f.startsWith('video.'));
   if (files.length === 0) {
@@ -287,8 +289,7 @@ async function downloadSubtitles(
       '-o', outputTemplate,
       '--no-playlist',
       '--socket-timeout', '15',
-      url,
-    ], 60_000, onRetry);
+    ], url, 60_000, onRetry);
 
     // Find the subtitle file
     const files = fs.readdirSync(outputDir).filter(f =>

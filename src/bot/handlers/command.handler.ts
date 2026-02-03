@@ -417,11 +417,19 @@ export async function handleProjectCallback(ctx: Context): Promise<void> {
       return;
     }
     const nextPath = path.join(state.current, selected);
-    if (!isWithinRoot(state.root, nextPath)) {
+    // Resolve symlinks before checking boundaries
+    let resolvedPath: string;
+    try {
+      resolvedPath = fs.realpathSync(nextPath);
+    } catch {
+      await ctx.answerCallbackQuery({ text: 'Path not accessible' });
+      return;
+    }
+    if (!isWithinRoot(state.root, resolvedPath)) {
       await ctx.answerCallbackQuery({ text: 'Outside workspace' });
       return;
     }
-    state.current = nextPath;
+    state.current = resolvedPath;
     state.page = 0;
     await ctx.answerCallbackQuery();
     await sendProjectBrowser(ctx, state, true);
@@ -434,9 +442,22 @@ function getProjectRoot(): string {
 }
 
 function isWithinRoot(root: string, target: string): boolean {
-  const resolvedRoot = path.resolve(root);
-  const resolvedTarget = path.resolve(target);
-  return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(resolvedRoot + path.sep);
+  try {
+    // Use realpathSync to resolve symlinks — prevents symlink-based path traversal
+    const resolvedRoot = fs.realpathSync(root);
+    // For target, first check if it exists; if not, use path.resolve
+    let resolvedTarget: string;
+    try {
+      resolvedTarget = fs.realpathSync(target);
+    } catch {
+      // Target doesn't exist yet — normalize path but can't resolve symlinks
+      resolvedTarget = path.resolve(target);
+    }
+    return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(resolvedRoot + path.sep);
+  } catch {
+    // If root doesn't exist, reject
+    return false;
+  }
 }
 
 function listDirectories(dir: string): string[] {

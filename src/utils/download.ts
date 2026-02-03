@@ -1,58 +1,59 @@
-import { spawn } from 'child_process';
+import { spawn, execFile } from 'child_process';
 
 /**
- * Download a file from a URL using curl with stdin config.
- * Prevents token exposure in process args (visible via `ps aux`).
+ * Validate URL for safe curl download.
+ * Rejects URLs that could cause injection in curl commands.
+ */
+function isValidCurlUrl(url: string): boolean {
+  // Must be http or https
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return false;
+  }
+  // Reject URLs with newlines, control characters, or shell metacharacters
+  if (/[\r\n\0]/.test(url)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Download a file from a URL using curl.
+ * Uses execFile with explicit URL argument (safe from shell injection).
+ * Validates URL to prevent curl-specific injection attacks.
  */
 export function downloadFileSecure(fileUrl: string, destPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const curlArgs = [
-      '-sS',
-      '-f',
-      '--connect-timeout',
-      '10',
-      '--max-time',
-      '30',
-      '--retry',
-      '3',
-      '--retry-delay',
-      '2',
-      '--retry-all-errors',
-      '-o',
-      destPath,
-      '-K',
-      '-', // Read config from stdin
-    ];
+    if (!isValidCurlUrl(fileUrl)) {
+      reject(new Error('Invalid URL for download'));
+      return;
+    }
 
-    const child = spawn('curl', curlArgs, { timeout: 60_000 });
-    let stderr = '';
-
-    child.stdin.on('error', (err) => {
-      reject(new Error(`Failed to write to curl stdin: ${err.message}`));
-    });
-
-    child.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    child.on('error', (err) => {
-      reject(new Error(`Failed to spawn curl: ${err.message}`));
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
+    // Use execFile (not spawn with shell) with URL as explicit argument.
+    // This avoids shell injection entirely.
+    execFile(
+      'curl',
+      [
+        '-sS',
+        '-f',
+        '--connect-timeout', '10',
+        '--max-time', '30',
+        '--retry', '3',
+        '--retry-delay', '2',
+        '--retry-all-errors',
+        '-o', destPath,
+        '--', // End of options marker
+        fileUrl, // URL as positional argument
+      ],
+      { timeout: 60_000 },
+      (error, _stdout, stderr) => {
+        if (error) {
+          const msg = (stderr || '').trim() || error.message;
+          reject(new Error(`Failed to download file: ${msg}`));
+          return;
+        }
         resolve();
-      } else {
-        const msg = stderr.trim() || `curl exited with code ${code}`;
-        reject(new Error(`Failed to download file: ${msg}`));
       }
-    });
-
-    // Write URL via stdin config format to avoid process arg exposure.
-    // Sanitize the URL to prevent curl config injection via embedded quotes/newlines.
-    const safeUrl = fileUrl.replace(/[\r\n"\\]/g, '');
-    child.stdin.write(`url = "${safeUrl}"\n`);
-    child.stdin.end();
+    );
   });
 }
 

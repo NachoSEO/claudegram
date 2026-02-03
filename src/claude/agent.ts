@@ -242,6 +242,16 @@ function getPermissionMode(command?: string): PermissionMode {
   return 'acceptEdits';
 }
 
+/**
+ * Log operations when DANGEROUS_MODE is enabled for security auditing.
+ */
+function logDangerousModeOperation(chatId: number, operation: string, details?: string): void {
+  if (!config.DANGEROUS_MODE) return;
+  const timestamp = new Date().toISOString();
+  const detailStr = details ? ` — ${details}` : '';
+  console.log(`[DANGEROUS_MODE] ${timestamp} chat:${chatId} ${operation}${detailStr}`);
+}
+
 export async function sendToAgent(
   chatId: number,
   message: string,
@@ -281,6 +291,9 @@ export async function sendToAgent(
 
   // Determine permission mode
   const permissionMode = getPermissionMode(command);
+
+  // Log in dangerous mode for security auditing
+  logDangerousModeOperation(chatId, 'query', `prompt_length:${message.length} cwd:${session.workingDirectory}`);
 
   // Determine model to use (default to 'opus' to match getModel() default)
   const effectiveModel = model || chatModels.get(chatId) || 'opus';

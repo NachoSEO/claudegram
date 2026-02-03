@@ -101,10 +101,9 @@ function getCredentials(): {
   if (!password) missing.push('REDDIT_PASSWORD');
 
   if (missing.length > 0) {
-    throw new Error(
-      `Missing Reddit credentials: ${missing.join(', ')}. ` +
-        `Set them in claudegram's .env file.`
-    );
+    // Don't enumerate which specific credentials are missing in user-facing errors
+    console.error(`[redditfetch] Missing Reddit credentials: ${missing.join(', ')}`);
+    throw new Error('Reddit integration not configured. See .env.example for setup instructions.');
   }
 
   return { clientId: clientId!, clientSecret: clientSecret!, username: username!, password: password! };
@@ -144,7 +143,9 @@ async function authenticate(): Promise<{ accessToken: string; userAgent: string 
   const data = (await resp.json()) as Record<string, unknown>;
   const accessToken = data.access_token as string | undefined;
   if (!accessToken) {
-    throw new Error(`Reddit OAuth failed: ${JSON.stringify(data)}`);
+    // Don't expose raw OAuth response which may contain error details
+    console.error('[redditfetch] OAuth response missing access_token:', JSON.stringify(data));
+    throw new Error('Reddit OAuth failed. Check credentials and try again.');
   }
 
   const expiresIn = (data.expires_in as number) || 86400;
