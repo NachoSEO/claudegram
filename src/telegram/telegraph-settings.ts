@@ -22,9 +22,39 @@ const SETTINGS_DIR = path.join(os.homedir(), '.claudegram');
 const SETTINGS_FILE = path.join(SETTINGS_DIR, 'telegraph-settings.json');
 const chatTelegraphSettings: Map<number, TelegraphSettings> = new Map();
 
+/**
+ * Validate chatId is a finite positive integer to prevent injection.
+ */
+function validateChatId(chatId: number): void {
+  if (!Number.isFinite(chatId) || chatId <= 0 || !Number.isInteger(chatId)) {
+    throw new Error(`Invalid chatId: ${chatId}`);
+  }
+}
+
 function ensureDirectory(): void {
   if (!fs.existsSync(SETTINGS_DIR)) {
     fs.mkdirSync(SETTINGS_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    // Verify existing directory has correct permissions (owner-only)
+    try {
+      const stats = fs.statSync(SETTINGS_DIR);
+      // Check if it's a directory and has restrictive permissions (mode 0o700)
+      if (!stats.isDirectory()) {
+        throw new Error(`${SETTINGS_DIR} exists but is not a directory`);
+      }
+      // On non-Windows, verify permissions
+      if (process.platform !== 'win32') {
+        const perms = stats.mode & 0o777;
+        if (perms !== 0o700) {
+          // Fix permissions if too permissive
+          fs.chmodSync(SETTINGS_DIR, 0o700);
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn('[Telegraph] Directory permission check failed:', error);
+      }
+    }
   }
 }
 
@@ -77,6 +107,8 @@ function saveSettings(): void {
 loadSettings();
 
 export function getTelegraphSettings(chatId: number): TelegraphSettings {
+  validateChatId(chatId);
+
   const existing = chatTelegraphSettings.get(chatId);
   if (existing) return existing;
 
@@ -87,6 +119,8 @@ export function getTelegraphSettings(chatId: number): TelegraphSettings {
 }
 
 export function setTelegraphEnabled(chatId: number, enabled: boolean): void {
+  validateChatId(chatId);
+
   const settings = getTelegraphSettings(chatId);
   settings.enabled = enabled;
   saveSettings();
