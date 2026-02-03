@@ -6,6 +6,24 @@ import * as path from 'path';
 const cache = new Map<string, string>();
 const isWin = process.platform === 'win32';
 
+/**
+ * Check if a path is a valid, non-symlink executable file.
+ */
+function isValidExecutable(filePath: string): boolean {
+  try {
+    const stats = fs.lstatSync(filePath);
+    // Reject symlinks to prevent symlink-based attacks
+    if (stats.isSymbolicLink()) return false;
+    // Must be a regular file
+    if (!stats.isFile()) return false;
+    // On non-Windows, check executable bit
+    if (!isWin && !(stats.mode & 0o111)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getSearchDirs(): string[] {
   const home = os.homedir();
 
@@ -49,7 +67,14 @@ export function resolveBin(name: string): string {
   }
 
   const cached = cache.get(name);
-  if (cached) return cached;
+  if (cached) {
+    // Validate cached path is still a valid executable (guards against TOCTOU)
+    if (isValidExecutable(cached)) {
+      return cached;
+    }
+    // Cache is stale or compromised — remove it
+    cache.delete(name);
+  }
 
   // Try the platform's lookup command first (works when PATH is correct)
   try {
@@ -68,11 +93,11 @@ export function resolveBin(name: string): string {
   for (const dir of SEARCH_DIRS) {
     for (const ext of suffixes) {
       const fullPath = path.join(dir, name + ext);
-      try {
-        fs.accessSync(fullPath, isWin ? fs.constants.F_OK : fs.constants.X_OK);
+      // Validate: must be regular file, not symlink, executable
+      if (isValidExecutable(fullPath)) {
         cache.set(name, fullPath);
         return fullPath;
-      } catch { /* not found or not executable */ }
+      }
     }
   }
 
