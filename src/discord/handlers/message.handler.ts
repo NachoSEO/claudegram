@@ -3,6 +3,8 @@ import {
   Attachment,
   ChannelType,
 } from 'discord.js';
+import * as fs from 'fs';
+import * as path from 'path';
 import { discordChatId } from '../id-mapper.js';
 import { isAuthorizedMessage } from '../middleware/auth.js';
 import { discordMessageSender } from '../message-sender.js';
@@ -14,10 +16,142 @@ import {
   getQueuePosition,
   setAbortController,
 } from '../../claude/request-queue.js';
+import { config } from '../../config.js';
 import { sanitizeError } from '../../utils/sanitize.js';
+import { downloadFileSecure } from '../../utils/download.js';
+import { isValidImageFile, getFileType } from '../../utils/file-type.js';
 import { handleVoiceMessage } from './voice.handler.js';
 import { maybeSendDiscordVoiceReply } from '../voice-reply.js';
 import { sendCompactionNotice, sendSessionInitNotice } from '../compaction-notice.js';
+
+const UPLOADS_DIR = '.claudegram/uploads';
+
+async function handleImageAttachment(
+  message: Message,
+  imageAttachment: Attachment,
+  isThread: boolean,
+  isMentioned: boolean,
+): Promise<void> {
+  const chatId = discordChatId(message.author.id);
+  const channelId = message.channelId;
+
+  const session = sessionManager.getSession(chatId);
+  if (!session) {
+    await message.reply('No project set. Use `/project <path>` first.');
+    return;
+  }
+
+  // Size check
+  const fileSizeMB = (imageAttachment.size || 0) / (1024 * 1024);
+  if (fileSizeMB > config.IMAGE_MAX_FILE_SIZE_MB) {
+    await message.reply(`Image too large (${fileSizeMB.toFixed(1)}MB). Max: ${config.IMAGE_MAX_FILE_SIZE_MB}MB.`);
+    return;
+  }
+
+  // Prepare upload directory
+  const uploadsDir = path.join(session.workingDirectory, UPLOADS_DIR);
+  fs.mkdirSync(uploadsDir, { recursive: true });
+
+  const timestamp = Date.now();
+  const originalName = imageAttachment.name || `image_${timestamp}.jpg`;
+  const safeName = path.basename(originalName).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const destPath = path.join(uploadsDir, `${timestamp}_${safeName}`);
+
+  try {
+    // Download from Discord CDN
+    await downloadFileSecure(imageAttachment.url, destPath);
+
+    // Validate magic bytes
+    if (!isValidImageFile(destPath)) {
+      if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+      throw new Error('Downloaded file is not a valid image.');
+    }
+
+    // Fix extension based on actual file type
+    const actualType = getFileType(destPath);
+    const rawExt = actualType?.extension || path.extname(originalName) || '.jpg';
+    const ext = rawExt.startsWith('.') ? rawExt : `.${rawExt}`;
+    const currentExt = path.extname(destPath);
+    let finalPath = destPath;
+    if (ext !== currentExt) {
+      finalPath = destPath.replace(new RegExp(`${currentExt.replace('.', '\\.')}$`), ext);
+      fs.renameSync(destPath, finalPath);
+    }
+
+    const relativePath = path.relative(session.workingDirectory, finalPath);
+
+    // Strip mention from caption text
+    let captionText = message.content;
+    if (isMentioned && message.client.user) {
+      captionText = captionText.replace(new RegExp(`<@!?${message.client.user.id}>`, 'g'), '').trim();
+    }
+
+    const noteLines = [
+      'User uploaded an image to the project.',
+      `Saved at: ${finalPath}`,
+      `Relative path: ${relativePath}`,
+      captionText ? `Caption: "${captionText}"` : 'Caption: (none)',
+      'If the caption includes a question or request, answer it. Otherwise, acknowledge briefly and ask if they want any analysis or edits.',
+      'You can inspect the image with tools if needed (e.g. Read tool for image files).',
+    ];
+    const agentPrompt = noteLines.join('\n');
+
+    if (isProcessing(chatId)) {
+      const position = getQueuePosition(chatId) + 1;
+      await message.reply(`Queued (position ${position})`);
+    }
+
+    try {
+      await message.react('\u23F3');
+    } catch { /* ignore */ }
+
+    await queueRequest(chatId, agentPrompt, async () => {
+      if (isThread && !isMentioned) {
+        await discordMessageSender.startStreamingInChannel(message.channel as any, channelId);
+      } else {
+        await discordMessageSender.startStreamingFromMessage(message, channelId);
+      }
+
+      const abortController = new AbortController();
+      setAbortController(chatId, abortController);
+
+      try {
+        const response = await sendToAgent(chatId, agentPrompt, {
+          onProgress: (progressText) => {
+            discordMessageSender.updateStream(channelId, progressText);
+          },
+          onToolStart: (toolName, input) => {
+            discordMessageSender.updateToolOperation(channelId, toolName, input);
+          },
+          onToolEnd: () => {
+            discordMessageSender.clearToolOperation(channelId);
+          },
+          abortController,
+          platform: 'discord',
+        });
+
+        await discordMessageSender.finishStreaming(channelId, response.text);
+        await maybeSendDiscordVoiceReply(message, response.text);
+        await sendCompactionNotice(message.channel, response.compaction);
+        await sendSessionInitNotice(message.channel, chatId, response.sessionInit);
+
+        try {
+          await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
+        } catch { /* ignore */ }
+      } catch (error) {
+        await discordMessageSender.cancelStreaming(channelId);
+        try {
+          await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
+        } catch { /* ignore */ }
+        throw error;
+      }
+    });
+  } catch (error) {
+    if ((error as Error).message === 'Queue cleared') return;
+    console.error('[Discord] Image error:', error);
+    await message.reply(`Image error: ${sanitizeError(error)}`).catch(() => {});
+  }
+}
 
 export async function handleMessage(message: Message): Promise<void> {
   // Ignore bot messages
@@ -43,6 +177,15 @@ export async function handleMessage(message: Message): Promise<void> {
   );
   if (voiceAttachment) {
     await handleVoiceMessage(message, voiceAttachment, isThread, isMentioned);
+    return;
+  }
+
+  // Image attachment detection — any image/* content type
+  const imageAttachment = message.attachments.find(
+    (a: Attachment) => a.contentType?.startsWith('image/')
+  );
+  if (imageAttachment) {
+    await handleImageAttachment(message, imageAttachment, isThread, isMentioned);
     return;
   }
 
