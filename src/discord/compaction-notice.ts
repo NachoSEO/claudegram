@@ -44,10 +44,10 @@ export async function sendSessionInitNotice(
   channel: any,
   chatId: number,
   sessionInit: { model: string; sessionId: string } | undefined,
+  previousSessionId?: string,
 ): Promise<void> {
   if (!config.CONTEXT_NOTIFY_COMPACTION || !sessionInit) return;
 
-  const previousSessionId = sessionManager.getSession(chatId)?.claudeSessionId;
   if (!previousSessionId || sessionInit.sessionId === previousSessionId) return;
 
   const embed = new EmbedBuilder()

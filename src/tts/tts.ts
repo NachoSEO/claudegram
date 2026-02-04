@@ -140,7 +140,7 @@ async function groqTTSSingle(text: string, voice: string): Promise<Buffer> {
   let response = await fetch(GROQ_TTS_ENDPOINT, fetchOpts);
 
   // On 403 (VPN/IP block), retry through residential proxy
-  if (response.status === 403) {
+  if (response.status === 403 && config.VOICE_PROXY_ENABLED) {
     const dispatcher = getProxyDispatcher();
     if (dispatcher) {
       console.log('[TTS/Groq] Got 403 — retrying through residential proxy');

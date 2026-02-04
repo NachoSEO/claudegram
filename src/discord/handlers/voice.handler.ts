@@ -61,6 +61,12 @@ export async function handleVoiceMessage(
 
     tempFilePath = path.join(os.tmpdir(), `claudegram_discord_voice_${message.id}${ext}`);
 
+    // Check attachment size before download (Groq Whisper max: 25MB)
+    const MAX_AUDIO_SIZE_MB = 25;
+    if (attachment.size && attachment.size > MAX_AUDIO_SIZE_MB * 1024 * 1024) {
+      throw new Error(`Audio file too large (${(attachment.size / 1024 / 1024).toFixed(1)}MB). Max: ${MAX_AUDIO_SIZE_MB}MB.`);
+    }
+
     // Download the audio file
     const response = await fetch(attachment.url);
     if (!response.ok) {

@@ -45,7 +45,7 @@ const SEARCH_DIRS = getSearchDirs();
 export function resolveBin(name: string): string {
   // Reject names with path separators to prevent traversal
   if (name.includes('/') || name.includes('\\') || name.includes('..')) {
-    return name;
+    throw new Error(`Invalid binary name: ${name}`);
   }
 
   const cached = cache.get(name);

@@ -30,6 +30,13 @@ export async function handleTranscribe(interaction: ChatInputCommandInteraction)
     const ext = attachment.name?.match(/\.\w+$/)?.[0] || '.ogg';
     tempFilePath = path.join(os.tmpdir(), `claudegram_transcribe_${interaction.id}${ext}`);
 
+    // Check size before download (Groq Whisper max: 25MB)
+    const MAX_TRANSCRIBE_SIZE_MB = 25;
+    if (attachment.size && attachment.size > MAX_TRANSCRIBE_SIZE_MB * 1024 * 1024) {
+      await interaction.editReply(`File too large. Maximum size is ${MAX_TRANSCRIBE_SIZE_MB}MB.`);
+      return;
+    }
+
     // Download
     const response = await fetch(attachment.url);
     if (!response.ok) throw new Error(`Download failed: ${response.status}`);

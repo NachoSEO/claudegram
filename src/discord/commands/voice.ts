@@ -46,8 +46,12 @@ async function handleJoin(interaction: ChatInputCommandInteraction): Promise<voi
     return;
   }
 
-  const member = interaction.member as GuildMember;
-  const voiceChannel = member.voice.channel;
+  const member = interaction.member;
+  if (!member || !('voice' in member)) {
+    await interaction.reply({ content: 'Could not determine your voice state.', ephemeral: true });
+    return;
+  }
+  const voiceChannel = (member as GuildMember).voice.channel;
 
   if (!voiceChannel) {
     await interaction.reply({ content: 'Join a voice channel first.', ephemeral: true });
@@ -149,7 +153,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
 
   const channel = interaction.guild.channels.cache.get(session.channelId);
   const channelName = channel?.name || session.channelId;
-  const geminiStatus = session.gemini.isOpen ? 'Connected' : 'Disconnected';
+  const geminiStatus = session.gemini?.isOpen ? 'Connected' : 'Disconnected';
   const listeners = session.subscriptions.size;
 
   const embed = new EmbedBuilder()

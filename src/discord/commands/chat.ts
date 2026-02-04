@@ -19,6 +19,7 @@ async function streamResponse(
   channelId: string,
   message: string,
   channel: any,
+  previousSessionId?: string,
 ): Promise<void> {
   const abortController = new AbortController();
   setAbortController(chatId, abortController);
@@ -42,7 +43,7 @@ async function streamResponse(
 
     // Context visibility notifications
     await sendCompactionNotice(channel, response.compaction);
-    await sendSessionInitNotice(channel, chatId, response.sessionInit);
+    await sendSessionInitNotice(channel, chatId, response.sessionInit, previousSessionId);
   } catch (error) {
     await discordMessageSender.cancelStreaming(channelId);
     throw error;
@@ -70,8 +71,9 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
     const channelId = interaction.channelId;
     await discordMessageSender.startStreaming(interaction, channelId);
 
+    const prevSid = sessionManager.getSession(chatId)?.claudeSessionId;
     await queueRequest(chatId, message, async () => {
-      await streamResponse(chatId, channelId, message, interaction.channel!);
+      await streamResponse(chatId, channelId, message, interaction.channel!, prevSid);
     });
   } else {
     // In a channel — create a thread, stream response there
@@ -97,8 +99,9 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
     const thinkingMsg = await thread.send({ embeds: [thinkingEmbed] });
     await discordMessageSender.startStreamingFromExistingMessage(thinkingMsg, threadChannelId);
 
+    const prevSid = sessionManager.getSession(chatId)?.claudeSessionId;
     await queueRequest(chatId, message, async () => {
-      await streamResponse(chatId, threadChannelId, message, thread);
+      await streamResponse(chatId, threadChannelId, message, thread, prevSid);
     });
   }
 }

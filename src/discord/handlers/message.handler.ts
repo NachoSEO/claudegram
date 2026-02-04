@@ -141,7 +141,7 @@ async function handleImageAttachment(
     const currentExt = path.extname(destPath);
     let finalPath = destPath;
     if (ext !== currentExt) {
-      finalPath = destPath.replace(new RegExp(`${currentExt.replace('.', '\\.')}$`), ext);
+      finalPath = destPath.slice(0, -currentExt.length) + ext;
       fs.renameSync(destPath, finalPath);
     }
 
@@ -172,6 +172,7 @@ async function handleImageAttachment(
       await message.react('\u23F3');
     } catch { /* ignore */ }
 
+    const previousSessionId = sessionManager.getSession(chatId)?.claudeSessionId;
     await queueRequest(chatId, agentPrompt, async () => {
       if (isThread && !isMentioned) {
         await discordMessageSender.startStreamingInChannel(message.channel as any, channelId);
@@ -200,7 +201,7 @@ async function handleImageAttachment(
         await discordMessageSender.finishStreaming(channelId, response.text);
         await maybeSendDiscordVoiceReply(message, response.text);
         await sendCompactionNotice(message.channel, response.compaction);
-        await sendSessionInitNotice(message.channel, chatId, response.sessionInit);
+        await sendSessionInitNotice(message.channel, chatId, response.sessionInit, previousSessionId);
 
         try {
           await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
@@ -307,6 +308,7 @@ export async function handleMessage(message: Message): Promise<void> {
     await message.react('\u23F3');
   } catch { /* ignore reaction errors */ }
 
+  const previousSessionId = sessionManager.getSession(chatId)?.claudeSessionId;
   try {
     await queueRequest(chatId, text, async () => {
       // In a thread without @mention: regular message (no inline reply)
@@ -340,7 +342,7 @@ export async function handleMessage(message: Message): Promise<void> {
 
         // Context visibility notifications
         await sendCompactionNotice(message.channel, response.compaction);
-        await sendSessionInitNotice(message.channel, chatId, response.sessionInit);
+        await sendSessionInitNotice(message.channel, chatId, response.sessionInit, previousSessionId);
 
         // Remove hourglass on completion
         try {

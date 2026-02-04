@@ -31,7 +31,10 @@ const discordEnvSchema = z.object({
   DISCORD_VIDEO_MAX_SIZE_MB: z
     .string()
     .default('10')
-    .transform((val) => parseInt(val, 10)),
+    .transform((val) => parseInt(val, 10))
+    .refine((val) => !isNaN(val) && val > 0 && val <= 200, {
+      message: 'DISCORD_VIDEO_MAX_SIZE_MB must be between 1 and 200',
+    }),
 });
 
 const parsed = discordEnvSchema.safeParse(process.env);
