@@ -46,8 +46,9 @@ export class MessageSender {
    * - Long content or tables: Telegraph page link
    */
   async sendMessage(ctx: Context, text: string): Promise<void> {
+    const chatId = ctx.chat?.id;
     // Check if we should use Telegraph for this content
-    if (shouldUseTelegraph(text)) {
+    if (shouldUseTelegraph(text, chatId)) {
       const pageUrl = await createTelegraphPage('Claude Response', text);
 
       if (pageUrl) {
@@ -437,7 +438,7 @@ export class MessageSender {
 
       if (state.messageId) {
         // Check if we should use Telegraph for final content
-        if (shouldUseTelegraph(finalContent)) {
+        if (shouldUseTelegraph(finalContent, chatId)) {
           const pageUrl = await createTelegraphPage('Claude Response', finalContent);
 
           if (pageUrl) {

@@ -68,12 +68,14 @@ export function getCachedUsage(chatId: number): AgentUsage | undefined {
   return chatUsageCache.get(chatId);
 }
 
-const BASE_SYSTEM_PROMPT = `You are ${config.BOT_NAME}, an AI assistant helping via Telegram.
+const CORE_GUIDELINES = `You are ${config.BOT_NAME}, an AI assistant helping via Telegram.
 
 Guidelines:
 - Show relevant code snippets when helpful, but keep them short
 - If a task requires multiple steps, execute them and summarize what you did
-- When you can't do something, explain why briefly
+- When you can't do something, explain why briefly`;
+
+const TELEGRAPH_FORMATTING = `
 
 Response Formatting — Telegraph-Aware Writing:
 Your responses are displayed via Telegram. Short responses render inline as MarkdownV2.
@@ -129,6 +131,26 @@ Structure guidelines for long responses:
 - Use > blockquotes for callouts, warnings, or important notes
 - Keep paragraphs concise; Telegraph renders best with short blocks of text
 - Nest sub-items under list items for tree-like structures instead of indented text`;
+
+const INLINE_FORMATTING = `
+
+Response Formatting:
+Your responses are displayed via Telegram using MarkdownV2 formatting.
+Long responses are automatically chunked into multiple messages.
+
+Supported formatting:
+- **bold**, *italic*, ~~strikethrough~~, \`inline code\`
+- Links: [text](url)
+- Lists: unordered (- item) and ordered (1. item)
+- Code blocks: \`\`\`code\`\`\`
+- Blockquotes: > text
+
+Instead of tables (which don't render well in Telegram), use bullet lists with bold labels:
+- **Name**: Alice
+- **Age**: 30
+- **City**: NYC`;
+
+const BASE_SYSTEM_PROMPT = CORE_GUIDELINES + (config.TELEGRAPH_ENABLED ? TELEGRAPH_FORMATTING : INLINE_FORMATTING);
 
 const REDDIT_TOOL_PROMPT = `
 

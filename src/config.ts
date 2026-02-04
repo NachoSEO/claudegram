@@ -104,6 +104,8 @@ const envSchema = z.object({
     .string()
     .default('50')
     .transform((val) => parseInt(val, 10)),
+  // Telegraph (Instant View for long messages)
+  TELEGRAPH_ENABLED: z.string().default('true').transform(toBool),
   // Medium / Freedium configuration
   MEDIUM_ENABLED: z.string().default('true').transform(toBool),
   MEDIUM_TIMEOUT_MS: z
