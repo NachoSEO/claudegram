@@ -20,6 +20,7 @@ import { handleContext } from '../commands/context.js';
 import { handleTranscribe } from '../commands/transcribe.js';
 import { handleTTS } from '../commands/tts.js';
 import { handleVoice } from '../commands/voice.js';
+import { handleDroid } from '../commands/droid.js';
 import { sanitizeError } from '../../utils/sanitize.js';
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
@@ -90,6 +91,9 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         break;
       case 'voice':
         await handleVoice(command);
+        break;
+      case 'droid':
+        await handleDroid(command);
         break;
       default:
         await command.reply({ content: `Unknown command: ${command.commandName}`, ephemeral: true });
