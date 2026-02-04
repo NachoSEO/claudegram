@@ -23,8 +23,75 @@ import { isValidImageFile, getFileType } from '../../utils/file-type.js';
 import { handleVoiceMessage } from './voice.handler.js';
 import { maybeSendDiscordVoiceReply } from '../voice-reply.js';
 import { sendCompactionNotice, sendSessionInitNotice } from '../compaction-notice.js';
+import { transcribeFile } from '../../audio/transcribe.js';
+import * as os from 'os';
 
 const UPLOADS_DIR = '.claudegram/uploads';
+
+interface ReplyContext {
+  /** Full prompt context to send to the agent. */
+  prompt: string;
+  /** Raw audio transcript (if the referenced message had audio). Null for text-only replies. */
+  audioTranscript: string | null;
+}
+
+/**
+ * If the message is a reply, fetch the referenced message and build context.
+ * Handles: text content, audio attachments (transcribe), image attachments (save + reference).
+ */
+async function buildReplyContext(message: Message): Promise<ReplyContext | null> {
+  if (!message.reference?.messageId) return null;
+
+  let refMsg: Message;
+  try {
+    refMsg = await message.channel.messages.fetch(message.reference.messageId);
+  } catch {
+    return null;
+  }
+
+  const parts: string[] = [];
+  let audioTranscript: string | null = null;
+
+  // Text content from referenced message
+  if (refMsg.content) {
+    parts.push(`[Replied-to message from ${refMsg.author.displayName}]:\n${refMsg.content}`);
+  }
+
+  // Audio attachment on referenced message → transcribe
+  const audioAttachment = refMsg.attachments.find(
+    (a: Attachment) => a.contentType?.startsWith('audio/')
+  );
+  if (audioAttachment && config.GROQ_API_KEY) {
+    try {
+      const ext = audioAttachment.contentType?.includes('ogg') ? '.ogg'
+        : audioAttachment.contentType?.includes('webm') ? '.webm'
+        : audioAttachment.contentType?.includes('mp4') ? '.mp4'
+        : '.ogg';
+      const tempPath = path.join(os.tmpdir(), `claudegram_reply_audio_${refMsg.id}${ext}`);
+      const resp = await fetch(audioAttachment.url);
+      if (resp.ok) {
+        const buf = await resp.arrayBuffer();
+        fs.writeFileSync(tempPath, Buffer.from(buf));
+        audioTranscript = await transcribeFile(tempPath);
+        parts.push(`[Transcription of replied-to audio from ${refMsg.author.displayName}]:\n${audioTranscript}`);
+        try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
+      }
+    } catch (err) {
+      console.error('[Discord] Failed to transcribe reply audio:', err);
+    }
+  }
+
+  // Image attachment on referenced message → note it
+  const imageAttachment = refMsg.attachments.find(
+    (a: Attachment) => a.contentType?.startsWith('image/')
+  );
+  if (imageAttachment) {
+    parts.push(`[Replied-to message has an image: ${imageAttachment.name || 'image'} (${imageAttachment.url})]`);
+  }
+
+  if (parts.length === 0) return null;
+  return { prompt: parts.join('\n\n'), audioTranscript };
+}
 
 async function handleImageAttachment(
   message: Message,
@@ -193,6 +260,26 @@ export async function handleMessage(message: Message): Promise<void> {
   let text = message.content;
   if (isMentioned && message.client.user) {
     text = text.replace(new RegExp(`<@!?${message.client.user.id}>`, 'g'), '').trim();
+  }
+
+  // Build context from replied-to message (text, audio transcription, image refs)
+  const replyContext = await buildReplyContext(message);
+  if (replyContext) {
+    // Show full audio transcript, chunked to fit Discord's 2000-char limit
+    if (replyContext.audioTranscript) {
+      const CHUNK_LIMIT = 1990;
+      const transcript = replyContext.audioTranscript;
+      await message.reply(`👤 ${transcript.slice(0, CHUNK_LIMIT)}`).catch(() => {});
+      for (let i = CHUNK_LIMIT; i < transcript.length; i += CHUNK_LIMIT) {
+        if ('send' in message.channel) {
+          await (message.channel as { send: Function }).send(`👤 ${transcript.slice(i, i + CHUNK_LIMIT)}`).catch(() => {});
+        }
+      }
+    }
+
+    text = text
+      ? `${replyContext.prompt}\n\n[User's message]: ${text}`
+      : replyContext.prompt;
   }
 
   if (!text || text.trim().length === 0) return;

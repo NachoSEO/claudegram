@@ -82,8 +82,16 @@ export async function handleVoiceMessage(
 
     console.log(`[Discord Voice] Transcript (${transcript.length} chars): ${transcript.substring(0, 100)}...`);
 
-    // Show transcript
-    await ackMsg.edit(`🎤 👤 ${transcript}`);
+    // Show full transcript, chunked to fit Discord's 2000-char limit
+    const CHUNK_LIMIT = 1990;
+    const firstChunk = transcript.slice(0, CHUNK_LIMIT);
+    await ackMsg.edit(`👤 ${firstChunk}`);
+    for (let i = CHUNK_LIMIT; i < transcript.length; i += CHUNK_LIMIT) {
+      const chunk = transcript.slice(i, i + CHUNK_LIMIT);
+      if ('send' in message.channel) {
+        await (message.channel as { send: Function }).send(`👤 ${chunk}`);
+      }
+    }
 
     // React with hourglass to indicate processing
     try {
@@ -149,10 +157,11 @@ export async function handleVoiceMessage(
     const errorMessage = sanitizeError(error);
     console.error('[Discord Voice] Error:', errorMessage);
 
+    const errDisplay = errorMessage.length > 1900 ? errorMessage.slice(0, 1900) + '…' : errorMessage;
     try {
-      await ackMsg.edit(`❌ Voice error: ${errorMessage}`);
+      await ackMsg.edit(`❌ Voice error: ${errDisplay}`);
     } catch {
-      await message.reply(`❌ Voice error: ${errorMessage}`).catch(() => {});
+      await message.reply(`❌ Voice error: ${errDisplay}`).catch(() => {});
     }
   } finally {
     // Clean up temp file
