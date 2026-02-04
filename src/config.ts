@@ -173,6 +173,13 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((val) => val.toLowerCase() === 'true'),
+  // Factory Droid integration
+  DROID_EXEC_PATH: z.string().default('~/.local/bin/droid'),
+  DROID_DEFAULT_MODEL: z.string().default('groq/llama-4-scout-17b-16e-instruct'),
+  DROID_TIMEOUT_MS: z
+    .string()
+    .default('300000')
+    .transform((val) => parseInt(val, 10)),
 });
 
 const parsed = envSchema.safeParse(process.env);

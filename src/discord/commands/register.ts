@@ -161,6 +161,40 @@ const commands = [
         .setDescription('Show voice session status')
     ),
 
+  new SlashCommandBuilder()
+    .setName('droid')
+    .setDescription('Run Factory Droid autonomous coding agent')
+    .addStringOption(option =>
+      option.setName('prompt')
+        .setDescription('Task for the droid to execute')
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName('model')
+        .setDescription('Model to use (default: groq/llama-4-scout)')
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName('auto')
+        .setDescription('Autonomy level')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Low', value: 'low' },
+          { name: 'Medium', value: 'medium' },
+          { name: 'High', value: 'high' },
+        )
+    )
+    .addStringOption(option =>
+      option.setName('spec')
+        .setDescription('Path to spec file for context')
+        .setRequired(false)
+    )
+    .addAttachmentOption(option =>
+      option.setName('audio')
+        .setDescription('Audio file to transcribe as the prompt')
+        .setRequired(false)
+    ),
+
   new ContextMenuCommandBuilder()
     .setName('Ask Claude')
     .setType(ApplicationCommandType.Message),
