@@ -215,7 +215,9 @@ export async function joinAndConnect(
   // the connection drops, instead of trying to auto-recover (which caused
   // the bot to rejoin after being removed from the channel).
   connection.on(VoiceConnectionStatus.Disconnected, () => {
-    disconnect(guildId);
+    disconnect(guildId).catch((err) => {
+      console.error(`[Voice] Error during disconnect cleanup for guild ${guildId}:`, err);
+    });
   });
 
   connection.on(VoiceConnectionStatus.Destroyed, () => {
@@ -312,7 +314,10 @@ async function connectGeminiSession(
       // Write without backpressure handling — for real-time audio we
       // prioritise latency.  The old `.once('drain')` pattern leaked
       // listeners (MaxListenersExceededWarning).
-      ctx.resampler.input.write(pcmBuffer);
+      const ok = ctx.resampler.input.write(pcmBuffer);
+      if (!ok && ctx.audioChunks % 100 === 0) {
+        console.warn(`[Voice] Playback resampler backpressure at chunk #${ctx.audioChunks}`);
+      }
     },
 
     onInterrupted: () => {
@@ -468,6 +473,13 @@ function subscribeToUser(state: VoiceSessionState, userId: string): void {
     });
   }
 
+  // When the opus stream dies, just remove the subscription entry.
+  // The resampler stays alive for the next subscription cycle.
+  const onStreamDeath = () => {
+    state.subscriptions.delete(userId);
+    try { decoder.destroy(); } catch { /* ignore */ }
+  };
+
   // Pipe opus→decoder normally (decoder dies with the stream — that's fine).
   // Use { end: false } on decoder→resampler so the ffmpeg resampler survives.
   opusStream.pipe(decoder);
@@ -477,12 +489,6 @@ function subscribeToUser(state: VoiceSessionState, userId: string): void {
   });
   decoder.pipe(recvResampler.input, { end: false });
 
-  // When the opus stream dies, just remove the subscription entry.
-  // The resampler stays alive for the next subscription cycle.
-  const onStreamDeath = () => {
-    state.subscriptions.delete(userId);
-    try { decoder.destroy(); } catch { /* ignore */ }
-  };
   opusStream.on('close', onStreamDeath);
   opusStream.on('error', (err: Error) => {
     console.error(`[Voice] Opus stream error for ${userId}:`, err.message);

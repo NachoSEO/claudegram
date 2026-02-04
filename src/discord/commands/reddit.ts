@@ -7,7 +7,7 @@ import {
   AttachmentBuilder,
   TextChannel,
 } from 'discord.js';
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import { discordChatId } from '../id-mapper.js';
 import { discordMessageSender } from '../message-sender.js';
@@ -25,14 +25,13 @@ function extractThreadTitle(markdown: string, fallback: string): string {
   return (first?.replace(/^[#*_>\-\s]+/, '').slice(0, 100)) || fallback.slice(0, 100);
 }
 
-const RESULT_TTL_MS = 5 * 60 * 1000;
 const COLLECTOR_TIMEOUT_MS = 5 * 60 * 1000;
 const CHAT_INLINE_LIMIT = 3000;
 
 export async function handleReddit(interaction: ChatInputCommandInteraction): Promise<void> {
   const target = interaction.options.getString('target', true);
   const sort = interaction.options.getString('sort') || undefined;
-  const limit = interaction.options.getString('limit');
+  const limit = interaction.options.getInteger('limit');
 
   await interaction.deferReply();
 
@@ -40,7 +39,7 @@ export async function handleReddit(interaction: ChatInputCommandInteraction): Pr
   const options: RedditFetchOptions = {
     format: 'markdown',
     sort: sort || 'hot',
-    limit: limit ? parseInt(limit, 10) : config.REDDITFETCH_DEFAULT_LIMIT,
+    limit: limit ?? config.REDDITFETCH_DEFAULT_LIMIT,
     depth: config.REDDITFETCH_DEFAULT_DEPTH,
   };
 
@@ -186,11 +185,11 @@ export async function handleReddit(interaction: ChatInputCommandInteraction): Pr
           // Save content to disk
           const baseDir = session.workingDirectory;
           const dir = path.join(baseDir, '.claudegram', 'reddit');
-          fs.mkdirSync(dir, { recursive: true });
+          await fs.mkdir(dir, { recursive: true });
           const slug = target.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 40);
           const stamp = new Date().toISOString().replace(/[:.]/g, '-');
           const mdPath = path.join(dir, `reddit_${slug}_${stamp}.md`);
-          fs.writeFileSync(mdPath, markdown, 'utf-8');
+          await fs.writeFile(mdPath, markdown, 'utf-8');
 
           // Build prompt
           const truncated = markdown.length > CHAT_INLINE_LIMIT;
@@ -258,8 +257,6 @@ export async function handleReddit(interaction: ChatInputCommandInteraction): Pr
         await interaction.followUp({ content: `Error: ${message.substring(0, 300)}`, ephemeral: true });
       } catch { /* expired */ }
     }
-
-    collector.stop();
   });
 
   collector.on('end', async (collected, reason) => {

@@ -4,6 +4,7 @@ import {
   ButtonStyle,
   ActionRowBuilder,
   ButtonInteraction,
+  ComponentType,
 } from 'discord.js';
 import * as path from 'path';
 import { discordChatId } from '../id-mapper.js';
@@ -55,6 +56,7 @@ export async function handleResume(interaction: ChatInputCommandInteraction): Pr
   });
 
   const collector = response.createMessageComponentCollector({
+    componentType: ComponentType.Button,
     time: COLLECTOR_TIMEOUT_MS,
   });
 
@@ -70,6 +72,11 @@ export async function handleResume(interaction: ChatInputCommandInteraction): Pr
     handled = true;
 
     const index = parseInt(i.customId.replace('resume-', ''), 10);
+    if (Number.isNaN(index) || index < 0 || index >= resumable.length) {
+      await i.update({ content: 'Invalid session index.', components: [] });
+      collector.stop();
+      return;
+    }
     const entry = resumable[index];
     if (!entry) {
       await i.update({ content: 'Session not found.', components: [] });
@@ -110,7 +117,9 @@ export async function handleResume(interaction: ChatInputCommandInteraction): Pr
 
       try {
         await interaction.editReply({ components: [disabledRow] });
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.debug('[Discord] Failed to disable resume buttons:', err);
+      }
     }
   });
 }

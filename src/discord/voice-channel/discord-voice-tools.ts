@@ -169,7 +169,8 @@ export function createDiscordVoiceTools(ctx: VoiceToolContext): GeminiTool[] {
 
       const match = matches.first()!;
       try {
-        await match.voice.disconnect('Kicked by BigBroDoe voice command');
+        const botName = ctx.client.user?.displayName ?? 'bot';
+        await match.voice.disconnect(`Kicked by ${botName} voice command`);
         return { success: true, kicked: match.displayName };
       } catch (err: any) {
         return { error: `Failed to kick ${match.displayName}: ${err.message}` };

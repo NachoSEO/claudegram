@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { resolveBin } from '../../utils/resolve-bin.js';
 
 /**
@@ -67,8 +67,6 @@ export interface ReceiveResampler {
   input: PassThrough;
   /** Read 16k mono PCM from here (send to Gemini). */
   output: PassThrough;
-  /** ffmpeg process ref. */
-  process: ChildProcess;
   kill: () => void;
   alive: boolean;
 }
@@ -104,7 +102,6 @@ export function createReceiveResampler(): ReceiveResampler {
   return {
     input,
     output,
-    process: ffmpeg,
     kill: () => {
       alive = false;
       try { ffmpeg.kill('SIGKILL'); } catch { /* already dead */ }

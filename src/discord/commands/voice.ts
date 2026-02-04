@@ -75,7 +75,9 @@ async function handleJoin(interaction: ChatInputCommandInteraction): Promise<voi
               .setDescription(text.length > 4000 ? text.slice(0, 4000) + '...' : text)
               .setFooter({ text: 'Gemini Live' });
             await (textChannel as TextChannel).send({ embeds: [embed] });
-          } catch { /* ignore send errors */ }
+          } catch (err) {
+            console.debug('[Voice] Failed to send text message to channel:', err);
+          }
         }
       },
     });

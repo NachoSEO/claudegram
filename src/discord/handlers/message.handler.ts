@@ -200,8 +200,10 @@ async function handleImageAttachment(
 
         await discordMessageSender.finishStreaming(channelId, response.text);
         await maybeSendDiscordVoiceReply(message, response.text);
-        await sendCompactionNotice(message.channel, response.compaction);
-        await sendSessionInitNotice(message.channel, chatId, response.sessionInit, previousSessionId);
+        if ('send' in message.channel) {
+          await sendCompactionNotice(message.channel, response.compaction);
+          await sendSessionInitNotice(message.channel, chatId, response.sessionInit, previousSessionId);
+        }
 
         try {
           await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
@@ -273,7 +275,7 @@ export async function handleMessage(message: Message): Promise<void> {
       await message.reply(`👤 ${transcript.slice(0, CHUNK_LIMIT)}`).catch(() => {});
       for (let i = CHUNK_LIMIT; i < transcript.length; i += CHUNK_LIMIT) {
         if ('send' in message.channel) {
-          await (message.channel as { send: Function }).send(`👤 ${transcript.slice(i, i + CHUNK_LIMIT)}`).catch(() => {});
+          await message.channel.send(`👤 ${transcript.slice(i, i + CHUNK_LIMIT)}`).catch(() => {});
         }
       }
     }
@@ -341,8 +343,10 @@ export async function handleMessage(message: Message): Promise<void> {
         await maybeSendDiscordVoiceReply(message, response.text);
 
         // Context visibility notifications
-        await sendCompactionNotice(message.channel, response.compaction);
-        await sendSessionInitNotice(message.channel, chatId, response.sessionInit, previousSessionId);
+        if ('send' in message.channel) {
+          await sendCompactionNotice(message.channel, response.compaction);
+          await sendSessionInitNotice(message.channel, chatId, response.sessionInit, previousSessionId);
+        }
 
         // Remove hourglass on completion
         try {

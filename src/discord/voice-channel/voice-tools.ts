@@ -84,6 +84,9 @@ const doMath: GeminiTool = {
   },
   execute: async (args) => {
     const expr = String(args.expression);
+    if (expr.length > 500) {
+      return { expression: expr.slice(0, 100) + '...', error: 'Expression too long (max 500 chars)' };
+    }
     try {
       // Preprocess natural language patterns before mathjs evaluation
       const prepared = expr

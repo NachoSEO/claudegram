@@ -281,6 +281,10 @@ async function generateSpeechGroq(text: string, voice?: string): Promise<Buffer>
  *   - openai: format from TTS_RESPONSE_FORMAT config)
  */
 export async function generateSpeech(text: string, voice?: string): Promise<Buffer> {
+  // Validate voice parameter to prevent injection of unexpected values
+  if (voice && !/^[a-zA-Z0-9_-]{1,30}$/.test(voice)) {
+    throw new Error(`Invalid voice name: ${voice.slice(0, 30)}`);
+  }
   if (config.TTS_PROVIDER === 'groq') {
     return generateSpeechGroq(text, voice);
   }
