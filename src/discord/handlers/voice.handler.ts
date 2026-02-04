@@ -144,14 +144,14 @@ export async function handleVoiceMessage(
 
         // Remove hourglass on completion
         try {
-          await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
+          if (message.client.user) await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user.id);
         } catch { /* ignore reaction errors */ }
       } catch (error) {
         await discordMessageSender.cancelStreaming(channelId);
 
         // Remove hourglass on error
         try {
-          await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
+          if (message.client.user) await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user.id);
         } catch { /* ignore reaction errors */ }
 
         throw error;

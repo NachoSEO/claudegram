@@ -90,10 +90,11 @@ const doMath: GeminiTool = {
     try {
       // Preprocess natural language patterns before mathjs evaluation
       const prepared = expr
-        .replace(/(\d+)%\s*of\s*(\d+)/gi, '($1/100)*$2')
-        .replace(/\^/g, '^'); // mathjs uses ^ for power natively
+        .replace(/(\d+)%\s*of\s*(\d+)/gi, '($1/100)*$2');
       const result = evaluate(prepared);
-      return { expression: expr, result: Number(result) };
+      const num = typeof result === 'number' ? result : Number(result);
+      if (Number.isNaN(num)) return { expression: expr, error: 'Result is not a number' };
+      return { expression: expr, result: num };
     } catch {
       return { expression: expr, error: 'Could not evaluate expression' };
     }

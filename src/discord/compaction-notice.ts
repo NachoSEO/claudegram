@@ -44,7 +44,6 @@ export async function sendCompactionNotice(
  */
 export async function sendSessionInitNotice(
   channel: SendableChannel,
-  chatId: number,
   sessionInit: { model: string; sessionId: string } | undefined,
   previousSessionId?: string,
 ): Promise<void> {

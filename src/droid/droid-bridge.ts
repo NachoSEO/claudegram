@@ -96,11 +96,15 @@ function spawnDroid(args: string[], timeoutMs: number): { proc: ChildProcess; ki
 
   const timer = setTimeout(() => {
     proc.kill('SIGTERM');
+    setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 5_000);
   }, timeoutMs);
 
   const kill = () => {
     clearTimeout(timer);
-    if (!proc.killed) proc.kill('SIGTERM');
+    if (!proc.killed) {
+      proc.kill('SIGTERM');
+      setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 5_000);
+    }
   };
 
   proc.on('exit', () => clearTimeout(timer));

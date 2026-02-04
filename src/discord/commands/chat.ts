@@ -43,7 +43,7 @@ async function streamResponse(
 
     // Context visibility notifications
     await sendCompactionNotice(channel, response.compaction);
-    await sendSessionInitNotice(channel, chatId, response.sessionInit, previousSessionId);
+    await sendSessionInitNotice(channel, response.sessionInit, previousSessionId);
   } catch (error) {
     await discordMessageSender.cancelStreaming(channelId);
     throw error;

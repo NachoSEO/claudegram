@@ -16,6 +16,7 @@ import { sessionManager } from '../../claude/session-manager.js';
 import { queueRequest, setAbortController } from '../../claude/request-queue.js';
 import { redditFetchBoth, type RedditFetchOptions } from '../../reddit/redditfetch.js';
 import { config } from '../../config.js';
+import { sanitizeError } from '../../utils/sanitize.js';
 
 
 function extractThreadTitle(markdown: string, fallback: string): string {
@@ -252,10 +253,9 @@ export async function handleReddit(interaction: ChatInputCommandInteraction): Pr
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
       try {
-        await interaction.followUp({ content: `Error: ${message.substring(0, 300)}`, ephemeral: true });
-      } catch { /* expired */ }
+        await interaction.followUp({ content: `Error: ${sanitizeError(err)}`, ephemeral: true });
+      } catch (followUpErr) { console.warn('[Reddit] Follow-up failed (interaction may have expired):', followUpErr); }
     }
   });
 
