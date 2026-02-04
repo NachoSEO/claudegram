@@ -18,7 +18,7 @@ async function streamResponse(
   chatId: number,
   channelId: string,
   message: string,
-  channel: any,
+  channel: { send: (...args: any[]) => Promise<any> },
   previousSessionId?: string,
 ): Promise<void> {
   const abortController = new AbortController();
@@ -73,7 +73,7 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
 
     const prevSid = sessionManager.getSession(chatId)?.claudeSessionId;
     await queueRequest(chatId, message, async () => {
-      await streamResponse(chatId, channelId, message, interaction.channel!, prevSid);
+      await streamResponse(chatId, channelId, message, interaction.channel as { send: (...args: any[]) => Promise<any> }, prevSid);
     });
   } else {
     // In a channel — create a thread, stream response there

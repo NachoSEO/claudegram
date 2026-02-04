@@ -95,7 +95,7 @@ export async function handleVoiceMessage(
     for (let i = CHUNK_LIMIT; i < transcript.length; i += CHUNK_LIMIT) {
       const chunk = transcript.slice(i, i + CHUNK_LIMIT);
       if ('send' in message.channel) {
-        await (message.channel as { send: Function }).send(`👤 ${chunk}`);
+        await message.channel.send(`👤 ${chunk}`);
       }
     }
 
@@ -108,7 +108,7 @@ export async function handleVoiceMessage(
     if (isProcessing(chatId)) {
       const position = getQueuePosition(chatId) + 1;
       if ('send' in message.channel) {
-        await (message.channel as { send: Function }).send(`Queued (position ${position})`);
+        await message.channel.send(`Queued (position ${position})`);
       }
     }
 

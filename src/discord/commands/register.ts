@@ -62,11 +62,19 @@ const commands = [
       option.setName('sort')
         .setDescription('Sort order (hot, new, top, rising)')
         .setRequired(false)
+        .addChoices(
+          { name: 'Hot', value: 'hot' },
+          { name: 'New', value: 'new' },
+          { name: 'Top', value: 'top' },
+          { name: 'Rising', value: 'rising' },
+        )
     )
-    .addStringOption(option =>
+    .addIntegerOption(option =>
       option.setName('limit')
         .setDescription('Number of posts to fetch (default 10)')
         .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(100)
     ),
 
   new SlashCommandBuilder()

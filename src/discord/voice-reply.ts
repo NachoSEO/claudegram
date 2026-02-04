@@ -34,6 +34,13 @@ function truncateToMax(text: string, maxChars: number): string {
   return truncated;
 }
 
+/** Get the file extension for the current TTS provider/format. */
+function getTTSFileExtension(): string {
+  if (config.TTS_PROVIDER === 'groq') return 'ogg';
+  if (config.TTS_RESPONSE_FORMAT === 'opus') return 'ogg';
+  return config.TTS_RESPONSE_FORMAT || 'mp3';
+}
+
 /**
  * If TTS is enabled for this user, generate speech from the response
  * and send as an audio attachment in Discord.
@@ -58,14 +65,11 @@ export async function maybeSendDiscordVoiceReply(
   try {
     const settings = getTTSSettings(chatId);
     const audioBuffer = await generateSpeech(safeText, settings.voice);
-    const ext = config.TTS_PROVIDER === 'groq' ? 'ogg'
-      : config.TTS_RESPONSE_FORMAT === 'opus' ? 'ogg'
-      : config.TTS_RESPONSE_FORMAT;
-
+    const ext = getTTSFileExtension();
     const attachment = new AttachmentBuilder(audioBuffer, { name: `response.${ext}` });
 
     if ('send' in message.channel) {
-      await (message.channel as any).send({ files: [attachment] });
+      await message.channel.send({ files: [attachment] });
     }
   } catch (error) {
     console.error('[Discord TTS] Failed to generate or send voice reply:', error);
@@ -98,16 +102,13 @@ export async function maybeSendDiscordVoiceReplyToChannel(
   try {
     const settings = getTTSSettings(chatId);
     const audioBuffer = await generateSpeech(safeText, settings.voice);
-    const ext = config.TTS_PROVIDER === 'groq' ? 'ogg'
-      : config.TTS_RESPONSE_FORMAT === 'opus' ? 'ogg'
-      : config.TTS_RESPONSE_FORMAT;
-
+    const ext = getTTSFileExtension();
     const attachment = new AttachmentBuilder(audioBuffer, { name: `response.${ext}` });
 
     const client = getDiscordClient();
     const channel = await client?.channels.fetch(channelId);
     if (channel && 'send' in channel) {
-      await (channel as any).send({ files: [attachment] });
+      await channel.send({ files: [attachment] });
     }
   } catch (error) {
     console.error('[Discord TTS] Failed to generate or send voice reply:', error);

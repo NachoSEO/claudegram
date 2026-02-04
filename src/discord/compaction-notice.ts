@@ -1,6 +1,8 @@
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config.js';
-import { sessionManager } from '../claude/session-manager.js';
+
+/** A channel that supports sending messages. */
+type SendableChannel = { send: (...args: any[]) => Promise<any> };
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -13,7 +15,7 @@ function fmtTokens(n: number): string {
  * Mirrors the Telegram `sendCompactionNotification`.
  */
 export async function sendCompactionNotice(
-  channel: any,
+  channel: SendableChannel,
   compaction: { trigger: 'manual' | 'auto'; preTokens: number } | undefined,
 ): Promise<void> {
   if (!config.CONTEXT_NOTIFY_COMPACTION || !compaction) return;
@@ -41,7 +43,7 @@ export async function sendCompactionNotice(
  * Mirrors the Telegram `sendSessionInitNotification`.
  */
 export async function sendSessionInitNotice(
-  channel: any,
+  channel: SendableChannel,
   chatId: number,
   sessionInit: { model: string; sessionId: string } | undefined,
   previousSessionId?: string,

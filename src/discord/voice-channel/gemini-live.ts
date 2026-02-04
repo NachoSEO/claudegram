@@ -216,7 +216,10 @@ export async function createGeminiLiveSession(
 
     sendActivityStart: (speakerName?: string) => {
       if (!isOpen) return;
-      // If we know who's speaking, tell Gemini before sending activityStart
+      // If we know who's speaking, tell Gemini before sending activityStart.
+      // NOTE: There's an inherent race between sendClientContent and
+      // sendRealtimeInput — the speaker hint may arrive after audio starts.
+      // This is a known limitation; Gemini handles it gracefully in practice.
       if (speakerName) {
         session.sendClientContent({
           turns: [{ role: 'user', parts: [{ text: `[${speakerName} is now speaking]` }] }],
@@ -273,12 +276,18 @@ async function handleToolCall(
         });
       }
     } else {
-      // Unknown or provider-handled tool (e.g. Google Search)
-      functionResponses.push({
-        id: fc.id,
-        name: fc.name,
-        response: { result: `Tool '${fc.name}' handled by provider or not implemented` },
-      });
+      // Provider-handled tools (e.g. googleSearch) are executed server-side
+      // by Gemini and should not receive a client-side function response.
+      // Only respond for genuinely unknown tools.
+      const providerTools = ['googleSearch', 'google_search'];
+      if (!providerTools.includes(fc.name)) {
+        console.warn(`[GeminiLive] Unknown tool called: ${fc.name}`);
+        functionResponses.push({
+          id: fc.id,
+          name: fc.name,
+          response: { error: `Unknown tool: '${fc.name}'` },
+        });
+      }
     }
   }
 

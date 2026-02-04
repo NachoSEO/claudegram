@@ -237,7 +237,7 @@ export class DiscordMessageSender {
    * Start streaming as a regular message (not a reply) in a channel/thread.
    * Used for thread follow-ups where the bot should NOT inline-reply.
    */
-  async startStreamingInChannel(channel: TextBasedChannel & { send: Function }, channelId: string): Promise<void> {
+  async startStreamingInChannel(channel: TextBasedChannel & { send: (...args: any[]) => Promise<Message> }, channelId: string): Promise<void> {
     const thinkingMsg = await channel.send({ embeds: [buildThinkingEmbed(0)] });
 
     const state: DiscordStreamState = {
