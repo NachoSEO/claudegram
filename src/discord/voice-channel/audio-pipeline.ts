@@ -35,21 +35,29 @@ export function createPlaybackResampler(): Resampler {
     output.destroy(err);
   });
 
-  input.pipe(ffmpeg.stdin!);
-  ffmpeg.stdout!.pipe(output);
+  if (!ffmpeg.stdin || !ffmpeg.stdout) {
+    alive = false;
+    const err = new Error('ffmpeg stdio not available — spawn may have failed');
+    output.destroy(err);
+    return { input, output, kill: () => { alive = false; }, get alive() { return alive; } };
+  }
+
+  input.pipe(ffmpeg.stdin);
+  ffmpeg.stdout.pipe(output);
 
   ffmpeg.on('exit', () => {
     alive = false;
     output.end();
   });
 
-  ffmpeg.stdin!.on('error', () => { /* swallow broken pipe */ });
+  ffmpeg.stdin.on('error', () => { /* swallow broken pipe */ });
 
   return {
     input,
     output,
     kill: () => {
       alive = false;
+      input.unpipe();
       try { ffmpeg.kill('SIGKILL'); } catch { /* already dead */ }
       input.destroy();
       output.destroy();
@@ -89,21 +97,29 @@ export function createReceiveResampler(): ReceiveResampler {
     output.destroy(err);
   });
 
-  input.pipe(ffmpeg.stdin!);
-  ffmpeg.stdout!.pipe(output);
+  if (!ffmpeg.stdin || !ffmpeg.stdout) {
+    alive = false;
+    const err = new Error('ffmpeg stdio not available — spawn may have failed');
+    output.destroy(err);
+    return { input, output, kill: () => { alive = false; }, get alive() { return alive; } };
+  }
+
+  input.pipe(ffmpeg.stdin);
+  ffmpeg.stdout.pipe(output);
 
   ffmpeg.on('exit', () => {
     alive = false;
     output.end();
   });
 
-  ffmpeg.stdin!.on('error', () => { /* swallow broken pipe */ });
+  ffmpeg.stdin.on('error', () => { /* swallow broken pipe */ });
 
   return {
     input,
     output,
     kill: () => {
       alive = false;
+      input.unpipe();
       try { ffmpeg.kill('SIGKILL'); } catch { /* already dead */ }
       input.destroy();
       output.destroy();

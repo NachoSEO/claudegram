@@ -35,7 +35,8 @@ function chunkText(text: string, limit = DISCORD_MSG_LIMIT - 50): string[] {
 export async function handleDroid(interaction: ChatInputCommandInteraction): Promise<void> {
   let prompt = interaction.options.getString('prompt') || '';
   const model = interaction.options.getString('model') || undefined;
-  const auto = (interaction.options.getString('auto') || 'low') as 'low' | 'medium' | 'high';
+  const autoRaw = interaction.options.getString('auto') || 'low';
+  const auto: 'low' | 'medium' | 'high' = ['low', 'medium', 'high'].includes(autoRaw) ? autoRaw as 'low' | 'medium' | 'high' : 'low';
   const spec = interaction.options.getString('spec') || undefined;
   const audioAttachment = interaction.options.getAttachment('audio');
 

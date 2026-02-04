@@ -68,7 +68,7 @@ async function buildReplyContext(message: Message): Promise<ReplyContext | null>
         : audioAttachment.contentType?.includes('mp4') ? '.mp4'
         : '.ogg';
       const tempPath = path.join(os.tmpdir(), `claudegram_reply_audio_${refMsg.id}${ext}`);
-      const resp = await fetch(audioAttachment.url);
+      const resp = await fetch(audioAttachment.url, { signal: AbortSignal.timeout(30_000) });
       if (resp.ok) {
         const buf = await resp.arrayBuffer();
         fs.writeFileSync(tempPath, Buffer.from(buf));
@@ -202,16 +202,16 @@ async function handleImageAttachment(
         await maybeSendDiscordVoiceReply(message, response.text);
         if ('send' in message.channel) {
           await sendCompactionNotice(message.channel, response.compaction);
-          await sendSessionInitNotice(message.channel, chatId, response.sessionInit, previousSessionId);
+          await sendSessionInitNotice(message.channel, response.sessionInit, previousSessionId);
         }
 
         try {
-          await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
+          if (message.client.user) await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user.id);
         } catch { /* ignore */ }
       } catch (error) {
         await discordMessageSender.cancelStreaming(channelId);
         try {
-          await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
+          if (message.client.user) await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user.id);
         } catch { /* ignore */ }
         throw error;
       }
@@ -345,19 +345,19 @@ export async function handleMessage(message: Message): Promise<void> {
         // Context visibility notifications
         if ('send' in message.channel) {
           await sendCompactionNotice(message.channel, response.compaction);
-          await sendSessionInitNotice(message.channel, chatId, response.sessionInit, previousSessionId);
+          await sendSessionInitNotice(message.channel, response.sessionInit, previousSessionId);
         }
 
         // Remove hourglass on completion
         try {
-          await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
+          if (message.client.user) await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user.id);
         } catch { /* ignore reaction errors */ }
       } catch (error) {
         await discordMessageSender.cancelStreaming(channelId);
 
         // Remove hourglass on error
         try {
-          await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user!.id);
+          if (message.client.user) await message.reactions.cache.get('\u23F3')?.users.remove(message.client.user.id);
         } catch { /* ignore reaction errors */ }
 
         throw error;

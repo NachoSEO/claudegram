@@ -112,7 +112,7 @@ export function createDiscordVoiceTools(ctx: VoiceToolContext): GeminiTool[] {
   tools.push({
     name: 'kick_from_voice',
     description:
-      'Disconnect a user from the voice channel by their exact display name. Use when someone asks you to kick or remove a specific person from voice. Cannot kick the bot itself.',
+      'Disconnect a user from the voice channel by their display name or username. Use when someone asks you to kick or remove a specific person from voice. Cannot kick the bot itself.',
     parameters: {
       type: 'object',
       properties: {
