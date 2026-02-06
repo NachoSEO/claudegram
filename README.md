@@ -9,7 +9,7 @@
 [![Telegram](https://img.shields.io/badge/Telegram_Bot-Grammy-26a5e4?logo=telegram&logoColor=white)](https://grammy.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-https://github.com/user-attachments/assets/7dc72e9d-ddf8-4c98-89d6-f8bff4f3645d
+<video src="https://github.com/user-attachments/assets/7dc72e9d-ddf8-4c98-89d6-f8bff4f3645d" width="350" autoplay loop muted playsinline></video>
 
 
 <br />
