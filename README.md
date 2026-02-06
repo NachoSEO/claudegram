@@ -10,6 +10,11 @@
 [![Discord](https://img.shields.io/badge/Discord_Bot-discord.js-5865f2?logo=discord&logoColor=white)](https://discord.js.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+<video width="350" height="620" controls poster="/videos/image.png">
+  <source src="/videos/agentTelly.mp4" type="video/mp4">
+</video>
+
+
 <br />
 
 ```
