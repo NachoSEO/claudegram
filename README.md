@@ -9,9 +9,7 @@
 [![Telegram](https://img.shields.io/badge/Telegram_Bot-Grammy-26a5e4?logo=telegram&logoColor=white)](https://grammy.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-<video width="350" height="620" controls poster="/videos/image.png">
-  <source src="/videos/agentTelly.mp4" type="video/mp4">
-</video>
+[![Demo Video](https://github.com/lliWcWill/claudegram/releases/download/demo-assets/image.png)](https://github.com/lliWcWill/claudegram/releases/download/demo-assets/agentTelly.mp4)
 
 
 <br />
