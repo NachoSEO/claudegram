@@ -9,7 +9,7 @@
 [![Telegram](https://img.shields.io/badge/Telegram_Bot-Grammy-26a5e4?logo=telegram&logoColor=white)](https://grammy.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-[![Demo Video](https://github.com/lliWcWill/claudegram/releases/download/demo-assets/image.png)](https://github.com/lliWcWill/claudegram/releases/download/demo-assets/agentTelly.mp4)
+https://github.com/user-attachments/assets/7dc72e9d-ddf8-4c98-89d6-f8bff4f3645d
 
 
 <br />
