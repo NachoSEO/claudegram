@@ -10,7 +10,7 @@
 [![Discord](https://img.shields.io/badge/Discord_Bot-discord.js-5865f2?logo=discord&logoColor=white)](https://discord.js.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-[![Demo Video](https://github.com/lliWcWill/claudegram/releases/download/demo-assets/image.png)](https://github.com/lliWcWill/claudegram/releases/download/demo-assets/agentTelly.mp4)
+https://github.com/user-attachments/assets/7dc72e9d-ddf8-4c98-89d6-f8bff4f3645d
 
 
 <br />
