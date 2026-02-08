@@ -2,16 +2,21 @@ import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { config } from '../config.js';
 import { resolveBin } from '../utils/resolve-bin.js';
 import { transcribeFile } from '../audio/transcribe.js';
 import { sanitizeError, sanitizePath } from '../utils/sanitize.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const INSTA_SCRIPT = path.resolve(__dirname, '../../insta_extract.py');
+
 // ── Types ──────────────────────────────────────────────────────────
 
 export type Platform = 'youtube' | 'instagram' | 'tiktok' | 'unknown';
 
-export type ExtractMode = 'text' | 'audio' | 'video' | 'all';
+export type ExtractMode = 'text' | 'audio' | 'video' | 'all' | 'all_chat';
 
 export type SubtitleFormat = 'text' | 'srt' | 'vtt';
 
@@ -122,6 +127,11 @@ export function platformLabel(platform: Platform): string {
 // ── Cookie Support ─────────────────────────────────────────────────
 
 function getCookieArgs(): string[] {
+  // Prefer --cookies-from-browser (live session, auto-refreshing)
+  if (config.YTDLP_COOKIES_BROWSER) {
+    return ['--cookies-from-browser', config.YTDLP_COOKIES_BROWSER];
+  }
+  // Fallback to static cookies file
   if (config.YTDLP_COOKIES_PATH && fs.existsSync(config.YTDLP_COOKIES_PATH)) {
     return ['--cookies', config.YTDLP_COOKIES_PATH];
   }
@@ -203,6 +213,61 @@ async function runYtDlp(
 
     throw err;
   }
+}
+
+// ── Instagrapi (Instagram mobile API) ───────────────────────────────
+
+interface InstagrapiResult {
+  title?: string;
+  duration?: number | null;
+  username?: string;
+  video_path?: string;
+  audio_path?: string;
+  video_warning?: string;
+  audio_warning?: string;
+  error?: string;
+  code?: string;
+}
+
+async function runInstagrapi(
+  url: string,
+  mode: 'video' | 'audio' | 'meta' | 'all',
+  outputDir: string
+): Promise<InstagrapiResult> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      'python3',
+      [INSTA_SCRIPT, '--url', url, '--mode', mode, '--output-dir', outputDir],
+      { timeout: YTDLP_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        // Script outputs JSON even on error (exit code 1)
+        const out = (stdout || '').trim();
+        if (out) {
+          try {
+            const parsed = JSON.parse(out) as InstagrapiResult;
+            if (parsed.error) {
+              reject(new Error(`[instagrapi] ${parsed.error}`));
+            } else {
+              resolve(parsed);
+            }
+            return;
+          } catch {
+            // JSON parse failed, fall through
+          }
+        }
+        if (error) {
+          reject(new Error(`insta_extract.py failed: ${(stderr || '').trim() || error.message}`));
+        } else {
+          reject(new Error('insta_extract.py returned no output'));
+        }
+      }
+    );
+  });
+}
+
+function isInstagrapiAvailable(): boolean {
+  return fs.existsSync(INSTA_SCRIPT) &&
+    fs.existsSync(path.join(os.homedir(), '.claudegram', 'instagrapi', 'session.json'));
 }
 
 // ── Metadata ───────────────────────────────────────────────────────
@@ -470,15 +535,18 @@ export async function extractMedia(opts: ExtractOptions): Promise<ExtractResult>
   };
 
   try {
+    // TODO: instagrapi path disabled — re-enable once mobile API session is stable
+    // See insta_extract.py for the Python helper script (needs working login)
+
     // Get metadata
     onProgress?.(`${emoji} Fetching metadata...`);
     const meta = await getVideoMeta(url, onProgress);
     result.title = meta.title;
     result.duration = meta.duration;
 
-    const wantsText = mode === 'text' || mode === 'all';
-    const wantsAudio = mode === 'audio' || mode === 'all';
-    const wantsVideo = mode === 'video' || mode === 'all';
+    const wantsText = mode === 'text' || mode === 'all' || mode === 'all_chat';
+    const wantsAudio = mode === 'audio' || mode === 'all' || mode === 'all_chat';
+    const wantsVideo = mode === 'video' || mode === 'all' || mode === 'all_chat';
 
     // For YouTube with subtitle format, try YouTube's own subtitles first
     const useYouTubeSubs = wantsText && platform === 'youtube' && subtitleFormat;

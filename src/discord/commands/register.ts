@@ -87,6 +87,15 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('extract')
+    .setDescription('Extract text, audio, or video from YouTube/Instagram/TikTok')
+    .addStringOption(option =>
+      option.setName('url')
+        .setDescription('URL to extract from')
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('continue')
     .setDescription('Resume the most recent session'),
 

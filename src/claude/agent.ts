@@ -219,12 +219,14 @@ const EXTRACT_TOOL_PROMPT = `
 
 Media Extract Tool:
 The user can extract text transcripts, audio, or video from YouTube, Instagram, and TikTok URLs using the /extract Telegram command.
-Usage: /extract <url> — shows a menu to pick: Text, Audio, Video, or All.
+Usage: /extract <url> — shows a menu to pick: Text, Audio, Video, All, or All + Chat.
 - Text: Downloads audio, transcribes via Groq Whisper, returns transcript
 - Audio: Downloads and sends the audio file (MP3)
 - Video: Downloads and sends the video file (MP4, if under 50MB)
 - All: Returns transcript + audio + video
+- All + Chat: Same as All, but also injects the transcript and URL into your conversation so you have full context to discuss the content
 If the user asks you to transcribe a YouTube/Instagram/TikTok video, tell them to use /extract with the URL.
+When you receive an "[Extract Context — All + Chat]" message, it means the user used All + Chat mode. You have the full transcript — acknowledge it and be ready to discuss.
 For voice notes sent directly in chat, use /transcribe instead.`;
 
 const REASONING_SUMMARY_INSTRUCTIONS = `
