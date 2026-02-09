@@ -8,7 +8,14 @@ import {
   getModel,
   isDangerousMode,
   getCachedUsage,
-} from '../../claude/agent.js';
+  getActiveProviderName,
+  setActiveProvider,
+  getAvailableProviders,
+  getAvailableModels,
+  clearModel,
+  type ProviderName,
+  type ModelInfo,
+} from '../../providers/provider-router.js';
 import { config } from '../../config.js';
 import { messageSender } from '../../telegram/message-sender.js';
 import { getUptimeFormatted } from '../middleware/stale-filter.js';
@@ -65,6 +72,7 @@ async function replyFeatureDisabled(ctx: Context, feature: string): Promise<void
 /** Build status lines appended to project confirmation messages. */
 export function projectStatusSuffix(chatId: number): string {
   const model = getModel(chatId);
+  const provider = getActiveProviderName(chatId);
   const dangerous = isDangerousMode() ? '⚠️ ENABLED' : 'Disabled';
   const session = sessionManager.getSession(chatId);
   const created = session?.createdAt
@@ -72,7 +80,7 @@ export function projectStatusSuffix(chatId: number): string {
     : new Date().toLocaleString();
   const sessionId = session?.claudeSessionId;
 
-  let suffix = `\n• *Model:* ${esc(model)}\n• *Created:* ${esc(created)}\n• *Dangerous Mode:* ${esc(dangerous)}`;
+  let suffix = `\n• *Provider:* ${esc(provider)}\n• *Model:* ${esc(model)}\n• *Created:* ${esc(created)}\n• *Dangerous Mode:* ${esc(dangerous)}`;
   if (sessionId) {
     suffix += `\n• *Session ID:* \`${esc(sessionId)}\``;
     suffix += `\n\n💡 To continue this session from the terminal, copy the command below\\.`;
@@ -776,12 +784,14 @@ export async function handleStatus(ctx: Context): Promise<void> {
   }
 
   const currentModel = getModel(chatId);
+  const provider = getActiveProviderName(chatId);
   const dangerousMode = isDangerousMode() ? '⚠️ ENABLED' : 'Disabled';
 
   let status = `📊 *Session Status*
 
 • *Working Directory:* \`${esc(session.workingDirectory)}\`
 • *Session ID:* \`${esc(session.conversationId)}\`
+• *Provider:* ${esc(provider)}
 • *Model:* ${esc(currentModel)}
 • *Created:* ${esc(session.createdAt.toLocaleString())}
 • *Last Activity:* ${esc(session.lastActivity.toLocaleString())}
@@ -1010,7 +1020,11 @@ export async function handleContext(ctx: Context): Promise<void> {
     return;
   }
 
-  // Fallback: CLI shell-out approach
+  // Fallback: CLI shell-out approach (Claude only)
+  if (getActiveProviderName(chatId) === 'opencode') {
+    await replyMd(ctx, '⚠️ No usage data yet\\.\n\nSend a message first, then run `/context` again\\.');
+    return;
+  }
   if (!session.claudeSessionId) {
     await replyMd(
       ctx,
@@ -1207,20 +1221,25 @@ export async function handleModelCommand(ctx: Context): Promise<void> {
   const text = ctx.message?.text || '';
   const args = text.split(' ').slice(1).join(' ').trim().toLowerCase();
 
-  const validModels = ['sonnet', 'opus', 'haiku'];
+  const providerName = getActiveProviderName(chatId);
+  const models = await getAvailableModels(chatId);
+  const validIds = models.map(m => m.id);
 
   if (!args) {
     const currentModel = getModel(chatId);
 
-    // Show inline keyboard for model selection
-    const keyboard = validModels.map((model) => {
-      const isCurrent = model === currentModel;
-      const label = isCurrent ? `✓ ${model}` : model;
-      return [{ text: label, callback_data: `model:${model}` }];
+    const keyboard = models.map((m) => {
+      const isCurrent = m.id === currentModel;
+      const label = isCurrent ? `✓ ${m.label}` : m.label;
+      return [{ text: label, callback_data: `model:${m.id}` }];
     });
 
+    const descriptions = models
+      .map(m => `• *${esc(m.label)}* \\- ${esc(m.description || '')}`)
+      .join('\n');
+
     await ctx.reply(
-      `🤖 *Select Model*\n\n_Current: ${esc(currentModel)}_\n\n• *opus* \\- Most capable \\(default\\)\n• *sonnet* \\- Balanced\n• *haiku* \\- Fast & light`,
+      `🤖 *Select Model* \\(${esc(providerName)}\\)\n\n_Current: ${esc(currentModel)}_\n\n${descriptions}`,
       {
         parse_mode: 'MarkdownV2',
         reply_markup: {
@@ -1231,8 +1250,8 @@ export async function handleModelCommand(ctx: Context): Promise<void> {
     return;
   }
 
-  if (!validModels.includes(args)) {
-    await replyMd(ctx, `❌ Unknown model "${esc(args)}"\\.\n\nAvailable: ${validModels.join(', ')}`);
+  if (!validIds.includes(args)) {
+    await replyMd(ctx, `❌ Unknown model "${esc(args)}"\\.\n\nAvailable: ${validIds.join(', ')}`);
     return;
   }
 
@@ -1248,18 +1267,72 @@ export async function handleModelCallback(ctx: Context): Promise<void> {
   if (!data || !data.startsWith('model:')) return;
 
   const model = data.replace('model:', '');
-  const validModels = ['sonnet', 'opus', 'haiku'];
 
-  if (!validModels.includes(model)) {
+  // Validate against current provider's models
+  const models = await getAvailableModels(chatId);
+  const validIds = models.map(m => m.id);
+
+  if (!validIds.includes(model)) {
     await ctx.answerCallbackQuery({ text: 'Invalid model' });
     return;
   }
 
   setModel(chatId, model);
 
-  await ctx.answerCallbackQuery({ text: `Model set to ${model}!` });
+  const modelInfo = models.find(m => m.id === model);
+  const displayName = modelInfo?.label || model;
+
+  await ctx.answerCallbackQuery({ text: `Model set to ${displayName}!` });
   await ctx.editMessageText(
-    `✅ Model set to *${esc(model)}*`,
+    `✅ Model set to *${esc(displayName)}*`,
+    { parse_mode: 'MarkdownV2' }
+  );
+}
+
+export async function handleProviderCommand(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const providers = getAvailableProviders();
+  const active = getActiveProviderName(chatId);
+
+  const keyboard = providers.map((p) => {
+    const label = p === active ? `✓ ${p}` : p;
+    return [{ text: label, callback_data: `provider:${p}` }];
+  });
+
+  await ctx.reply(
+    `🔌 *Select Provider*\n\n_Current: ${esc(active)}_\n\n• *claude* \\- Claude Code SDK \\(Anthropic\\)\n• *opencode* \\- OpenCode \\(75\\+ LLM providers\\)`,
+    {
+      parse_mode: 'MarkdownV2',
+      reply_markup: {
+        inline_keyboard: keyboard,
+      },
+    }
+  );
+}
+
+export async function handleProviderCallback(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith('provider:')) return;
+
+  const provider = data.replace('provider:', '') as ProviderName;
+  const providers = getAvailableProviders();
+
+  if (!providers.includes(provider)) {
+    await ctx.answerCallbackQuery({ text: 'Invalid provider' });
+    return;
+  }
+
+  await setActiveProvider(chatId, provider);
+  clearModel(chatId); // Models differ between providers
+
+  await ctx.answerCallbackQuery({ text: `Switched to ${provider}!` });
+  await ctx.editMessageText(
+    `✅ Provider set to *${esc(provider)}*\n\n_Model selection cleared \\— use /model to pick a model\\._`,
     { parse_mode: 'MarkdownV2' }
   );
 }
@@ -1560,6 +1633,11 @@ export async function handleSessions(ctx: Context): Promise<void> {
 export async function handleTeleport(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
+
+  if (getActiveProviderName(chatId) === 'opencode') {
+    await replyMd(ctx, 'ℹ️ `/teleport` is not available for the OpenCode provider\\.');
+    return;
+  }
 
   const session = sessionManager.getSession(chatId);
 
