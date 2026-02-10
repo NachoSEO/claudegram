@@ -10,8 +10,6 @@
 [![Discord](https://img.shields.io/badge/Discord_Bot-discord.js-5865f2?logo=discord&logoColor=white)](https://discord.js.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-<img src="videos/demo.gif" width="350" alt="Claudegram Demo" />
-
 
 <br />
 
