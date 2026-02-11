@@ -1,6 +1,7 @@
 import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai';
 import type { Client } from 'discord.js';
 import { config } from '../../config.js';
+import { eventBus } from '../../dashboard/event-bus.js';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -71,6 +72,11 @@ You have access to tools — use them when relevant:
 - kick_from_voice to remove someone from the voice channel (only when asked)
 - translate to help with translations — you can speak the translated text aloud in the target language
 - deep_research for thorough research on any topic (runs in the background)
+- search_memory to recall things from your knowledge base — use when the user asks about something they previously mentioned or stored
+- remember to save important info for later — use when the user asks you to remember something or when key context should be preserved
+- ask_claude to delegate complex tasks to Claude (deep reasoning, code gen, analysis) — runs in the background, summarize the result when it comes back
+- ask_droid for lightning-fast code generation and quick tasks via Groq LPU — runs in the background
+- run_command to execute shell commands on the Linux desktop (system info, file ops, scripts)
 
 When you use a tool, tell the user the result naturally in speech.
 Be natural, use casual language, and match the energy of the conversation.
@@ -256,6 +262,7 @@ async function handleToolCall(
 
   for (const fc of toolCall.functionCalls ?? []) {
     console.log(`[GeminiLive] Tool call: ${fc.name}(${JSON.stringify(fc.args)})`);
+    eventBus.emit('voice:tool_call', { guildId: 'live', toolName: fc.name, args: fc.args ?? {}, timestamp: Date.now() });
 
     const tool = toolMap.get(fc.name);
     if (tool) {

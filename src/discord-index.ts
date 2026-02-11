@@ -2,6 +2,8 @@ import { createDiscordBot } from './discord/discord-bot.js';
 import { registerCommands } from './discord/commands/register.js';
 import { discordConfig } from './discord/discord-config.js';
 import { disconnectAll } from './discord/voice-channel/voice-connection.js';
+import { config } from './config.js';
+import { startDashboardServer, stopDashboardServer } from './dashboard/server.js';
 
 async function main() {
   console.log('Starting Claudegram Discord bot...');
@@ -9,6 +11,11 @@ async function main() {
 
   // Register slash commands
   await registerCommands();
+
+  // Start dashboard server if enabled
+  if (config.DASHBOARD_ENABLED) {
+    startDashboardServer(config.DASHBOARD_PORT);
+  }
 
   // Create and start the bot
   const client = createDiscordBot();
@@ -19,6 +26,7 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log('\nShutting down Discord bot...');
+    stopDashboardServer();
 
     // Gracefully disconnect all voice sessions first (closes Gemini, kills ffmpeg cleanly)
     await disconnectAll();

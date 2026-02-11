@@ -1,4 +1,5 @@
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import { eventBus } from '../dashboard/event-bus.js';
 
 type QueuedRequest<T> = {
   message: string;
@@ -71,6 +72,7 @@ export async function queueRequest<T>(
       pendingQueues.set(chatId, queue);
     }
     queue.push(request as QueuedRequest<unknown>);
+    eventBus.emit('queue:enqueue', { chatId, message, queueDepth: queue.length, timestamp: Date.now() });
 
     processQueue(chatId);
   });
@@ -87,7 +89,9 @@ async function processQueue(chatId: number): Promise<void> {
   }
 
   processingFlags.set(chatId, true);
+  eventBus.emit('queue:processing', { chatId, isProcessing: true, timestamp: Date.now() });
   const request = queue.shift()!;
+  eventBus.emit('queue:dequeue', { chatId, timestamp: Date.now() });
 
   try {
     const result = await request.handler();
@@ -96,6 +100,7 @@ async function processQueue(chatId: number): Promise<void> {
     request.reject(error instanceof Error ? error : new Error(String(error)));
   } finally {
     processingFlags.set(chatId, false);
+    eventBus.emit('queue:processing', { chatId, isProcessing: false, timestamp: Date.now() });
     clearAbortController(chatId);
     clearActiveQuery(chatId);
     clearCancelled(chatId);

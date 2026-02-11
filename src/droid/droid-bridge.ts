@@ -3,6 +3,7 @@ import { createInterface } from 'readline';
 import { homedir } from 'os';
 import { existsSync, readFileSync } from 'fs';
 import { config } from '../config.js';
+import { eventBus } from '../dashboard/event-bus.js';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -117,6 +118,8 @@ function spawnDroid(args: string[], timeoutMs: number): { proc: ChildProcess; ki
 
 export async function execDroidJSON(prompt: string, opts: DroidOptions = {}): Promise<DroidResult> {
   const timeoutMs = opts.timeoutMs ?? config.DROID_TIMEOUT_MS;
+  const droidModel = opts.model ?? config.DROID_DEFAULT_MODEL;
+  eventBus.emit('droid:start', { prompt: prompt.slice(0, 200), model: droidModel, timestamp: Date.now() });
   const args = buildArgs(prompt, 'json', opts);
   const { proc, kill } = spawnDroid(args, timeoutMs);
 
@@ -148,20 +151,24 @@ export async function execDroidJSON(prompt: string, opts: DroidOptions = {}): Pr
 
       try {
         const parsed = JSON.parse(stdout);
-        resolve({
+        const droidResult = {
           result: parsed.result ?? stdout,
           sessionId: parsed.session_id,
           durationMs: parsed.duration_ms ?? 0,
           isError: parsed.is_error ?? (code !== 0),
           numTurns: parsed.num_turns,
-        });
+        };
+        eventBus.emit('droid:complete', { result: droidResult.result.slice(0, 500), durationMs: droidResult.durationMs, isError: droidResult.isError, timestamp: Date.now() });
+        resolve(droidResult);
       } catch {
         // droid-exec might return plain text if -o json isn't supported by version
-        resolve({
+        const droidResult = {
           result: stdout,
           durationMs: 0,
           isError: code !== 0,
-        });
+        };
+        eventBus.emit('droid:complete', { result: droidResult.result.slice(0, 500), durationMs: 0, isError: droidResult.isError, timestamp: Date.now() });
+        resolve(droidResult);
       }
     });
   });
@@ -171,6 +178,8 @@ export async function execDroidJSON(prompt: string, opts: DroidOptions = {}): Pr
 
 export async function* execDroidStream(prompt: string, opts: DroidOptions = {}): AsyncGenerator<DroidStreamEvent> {
   const timeoutMs = opts.timeoutMs ?? config.DROID_TIMEOUT_MS;
+  const droidModel = opts.model ?? config.DROID_DEFAULT_MODEL;
+  eventBus.emit('droid:start', { prompt: prompt.slice(0, 200), model: droidModel, timestamp: Date.now() });
   const args = buildArgs(prompt, 'stream-json', opts);
   const { proc, kill } = spawnDroid(args, timeoutMs);
 

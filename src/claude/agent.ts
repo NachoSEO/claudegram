@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import { sessionManager } from './session-manager.js';
 import { setActiveQuery, clearActiveQuery, isCancelled } from './request-queue.js';
 import { config } from '../config.js';
+import { eventBus } from '../dashboard/event-bus.js';
 
 export interface AgentUsage {
   inputTokens: number;
@@ -332,6 +333,7 @@ export async function sendToAgent(
   let resultUsage: AgentUsage | undefined;
   let compactionEvent: { trigger: 'manual' | 'auto'; preTokens: number } | undefined;
   let initEvent: { model: string; sessionId: string } | undefined;
+  let agentStartTime = Date.now();
 
   // Determine permission mode
   const permissionMode = getPermissionMode(command);
@@ -465,6 +467,15 @@ export async function sendToAgent(
       },
     };
 
+    agentStartTime = Date.now();
+    eventBus.emit('agent:start', {
+      chatId,
+      model: effectiveModel,
+      prompt: prompt.slice(0, 200),
+      sessionId: existingSessionId,
+      timestamp: agentStartTime,
+    });
+
     const response = query({
       prompt,
       options: queryOptions,
@@ -501,6 +512,7 @@ export async function sendToAgent(
                   : '';
             logAt('verbose', `[Claude] Tool: ${block.name}${inputSummary ? ` → ${inputSummary}` : ''}`);
             toolsUsed.push(block.name);
+            eventBus.emit('agent:tool_start', { chatId, toolName: block.name, input: toolInput, timestamp: Date.now() });
             // Notify tool start for terminal UI
             onToolStart?.(block.name, toolInput);
           }
@@ -532,6 +544,7 @@ export async function sendToAgent(
         logAt('verbose', `[Claude] Tool progress: ${responseMessage.tool_name}`, responseMessage);
       } else if (responseMessage.type === 'tool_use_summary') {
         logAt('verbose', '[Claude] Tool use summary', responseMessage);
+        eventBus.emit('agent:tool_end', { chatId, toolName: '', timestamp: Date.now() });
         // Notify tool end for terminal UI (summary doesn't include tool name)
         onToolEnd?.();
       } else if (responseMessage.type === 'auth_status') {
@@ -603,6 +616,7 @@ export async function sendToAgent(
     } else {
       console.error('[Claude] Full error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      eventBus.emit('agent:error', { chatId, error: errorMessage, timestamp: Date.now() });
       throw new Error(`Claude error: ${errorMessage}`);
     }
   } finally {
@@ -623,6 +637,15 @@ export async function sendToAgent(
   if (resultUsage) {
     chatUsageCache.set(chatId, resultUsage);
   }
+
+  eventBus.emit('agent:complete', {
+    chatId,
+    text: fullText.slice(0, 500),
+    toolsUsed,
+    usage: resultUsage,
+    durationMs: Date.now() - agentStartTime,
+    timestamp: Date.now(),
+  });
 
   return {
     text: stripReasoningSummary(fullText) || 'No response from Claude.',
