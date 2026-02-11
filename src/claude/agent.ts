@@ -501,13 +501,6 @@ export async function sendToAgent(
         logAt('basic', '[Claude] Result:', JSON.stringify(responseMessage, null, 2).substring(0, 500));
         gotResult = true;
 
-        // Capture session_id for conversation continuity
-        if ('session_id' in responseMessage && responseMessage.session_id) {
-          chatSessionIds.set(chatId, responseMessage.session_id);
-          sessionManager.setClaudeSessionId(chatId, responseMessage.session_id);
-          logAt('basic', `[Claude] Stored session ${responseMessage.session_id} for chat ${chatId}`);
-        }
-
         // Extract usage data from result
         const resultMsg = responseMessage as SDKResultMessage;
         if (resultMsg.modelUsage) {
@@ -528,6 +521,13 @@ export async function sendToAgent(
         }
 
         if (responseMessage.subtype === 'success') {
+          // Only store session_id on successful results (not on error_during_execution)
+          if ('session_id' in responseMessage && responseMessage.session_id) {
+            chatSessionIds.set(chatId, responseMessage.session_id);
+            sessionManager.setClaudeSessionId(chatId, responseMessage.session_id);
+            logAt('basic', `[Claude] Stored session ${responseMessage.session_id} for chat ${chatId}`);
+          }
+
           // Append final result text if different from accumulated
           if (responseMessage.result && !fullText.includes(responseMessage.result)) {
             if (fullText.length > 0) {
@@ -542,6 +542,14 @@ export async function sendToAgent(
           onProgress?.(fullText);
         } else {
           // error_max_turns or unexpected error_during_execution
+          // Clear stale session ID so next attempt starts fresh
+          chatSessionIds.delete(chatId);
+          const session = sessionManager.getSession(chatId);
+          if (session) {
+            session.claudeSessionId = undefined;
+          }
+          logAt('basic', `[Claude] Cleared stale session for chat ${chatId} due to ${responseMessage.subtype}`);
+
           fullText = `Error: ${responseMessage.subtype}`;
           onProgress?.(fullText);
         }
