@@ -18,7 +18,9 @@ import { createPlaybackResampler, createReceiveResampler, type Resampler, type R
 import { createGeminiLiveSession, type GeminiLiveSession } from './gemini-live.js';
 import { voiceTools } from './voice-tools.js';
 import { createDiscordVoiceTools } from './discord-voice-tools.js';
+import { createAgentVoiceTools, agentContextFromGuild } from './agent-voice-tools.js';
 import { getDiscordClient } from '../discord-bot.js';
+import { eventBus } from '../../dashboard/event-bus.js';
 
 // prism-media is CJS-only — use createRequire for ESM compat
 const require = createRequire(import.meta.url);
@@ -287,7 +289,8 @@ async function connectGeminiSession(
         textChannelId,
       })
     : [];
-  const allTools = [...voiceTools, ...discordTools];
+  const agentTools = createAgentVoiceTools(agentContextFromGuild(guildId));
+  const allTools = [...voiceTools, ...discordTools, ...agentTools];
 
   console.log(`[Voice] Tools registered: ${allTools.map(t => t.name).join(', ')} (${allTools.length} total)`);
 
@@ -322,6 +325,7 @@ async function connectGeminiSession(
 
     onInterrupted: () => {
       console.log('[Voice] Barge-in — resetting playback pipeline');
+      eventBus.emit('voice:interrupted', { guildId, timestamp: Date.now() });
       ctx.resampler.kill();
       ctx.audioChunks = 0;
       ctx.resampler = createPlaybackResampler();
@@ -338,6 +342,7 @@ async function connectGeminiSession(
 
     onOpen: () => {
       console.log(`[Voice] Gemini Live connected (guild ${guildId})`);
+      eventBus.emit('voice:open', { guildId, channelId: channelId || '', timestamp: Date.now() });
       // Delay clearing the reconnect counter — if the session closes within
       // seconds of opening (unstable), the counter keeps incrementing so we
       // eventually hit MAX_RECONNECTS and stop instead of looping forever.
@@ -354,11 +359,13 @@ async function connectGeminiSession(
 
     onClose: (reason) => {
       console.log(`[Voice] Gemini Live closed (guild ${guildId}): ${reason}`);
+      eventBus.emit('voice:close', { guildId, reason, timestamp: Date.now() });
       // Auto-reconnect if the session still exists (user didn't /voice leave)
       attemptGeminiReconnect(guildId, player, ctx);
     },
 
     onText: (text) => {
+      eventBus.emit('voice:text', { guildId, text, timestamp: Date.now() });
       const st = sessions.get(guildId);
       st?.onTextMessage?.(text);
     },

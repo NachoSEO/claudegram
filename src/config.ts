@@ -174,6 +174,15 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((val) => val.toLowerCase() === 'true'),
+  // Dashboard
+  DASHBOARD_ENABLED: z
+    .string()
+    .default('false')
+    .transform((val) => val.toLowerCase() === 'true'),
+  DASHBOARD_PORT: z
+    .string()
+    .default('3001')
+    .transform((val) => parseInt(val, 10)),
   // Factory Droid integration
   DROID_EXEC_PATH: z.string().default('~/.local/bin/droid'),
   DROID_DEFAULT_MODEL: z.string().default('groq/llama-4-scout-17b-16e-instruct'),
