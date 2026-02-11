@@ -88,6 +88,7 @@ In group conversations, only speak when addressed or when you have something gen
 export async function createGeminiLiveSession(
   callbacks: GeminiLiveCallbacks,
   tools: GeminiTool[] = [],
+  guildId?: string,
 ): Promise<GeminiLiveSession> {
   if (!config.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY not configured.');
@@ -177,7 +178,7 @@ export async function createGeminiLiveSession(
 
         // Handle tool calls (function calling)
         if ((msg as any).toolCall) {
-          handleToolCall(session, (msg as any).toolCall, toolMap).catch(err => {
+          handleToolCall(session, (msg as any).toolCall, toolMap, guildId).catch(err => {
             console.error('[GeminiLive] Tool call execution error:', err);
           });
           return;
@@ -257,12 +258,13 @@ async function handleToolCall(
   session: any,
   toolCall: any,
   toolMap: Map<string, GeminiTool>,
+  guildId?: string,
 ): Promise<void> {
   const functionResponses: any[] = [];
 
   for (const fc of toolCall.functionCalls ?? []) {
     console.log(`[GeminiLive] Tool call: ${fc.name}(${JSON.stringify(fc.args)})`);
-    eventBus.emit('voice:tool_call', { guildId: 'live', toolName: fc.name, args: fc.args ?? {}, timestamp: Date.now() });
+    eventBus.emit('voice:tool_call', { guildId: guildId ?? 'unknown', toolName: fc.name, args: fc.args ?? {}, timestamp: Date.now() });
 
     const tool = toolMap.get(fc.name);
     if (tool) {

@@ -369,7 +369,7 @@ async function connectGeminiSession(
       const st = sessions.get(guildId);
       st?.onTextMessage?.(text);
     },
-  }, allTools);
+  }, allTools, guildId);
 }
 
 // ── Gemini auto-reconnect ────────────────────────────────────────────

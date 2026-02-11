@@ -72,7 +72,7 @@ export async function queueRequest<T>(
       pendingQueues.set(chatId, queue);
     }
     queue.push(request as QueuedRequest<unknown>);
-    eventBus.emit('queue:enqueue', { chatId, message, queueDepth: queue.length, timestamp: Date.now() });
+    eventBus.emit('queue:enqueue', { chatId, message: message.slice(0, 200), queueDepth: queue.length, timestamp: Date.now() });
 
     processQueue(chatId);
   });

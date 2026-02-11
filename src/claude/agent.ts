@@ -604,6 +604,13 @@ export async function sendToAgent(
   } catch (error) {
     // If cancelled via /cancel or /reset, return clean message
     if (isCancelled(chatId) || abortController?.signal.aborted) {
+      eventBus.emit('agent:complete', {
+        chatId,
+        text: '✅ Cancelled',
+        toolsUsed,
+        durationMs: Date.now() - agentStartTime,
+        timestamp: Date.now(),
+      });
       return {
         text: '✅ Successfully cancelled - no tools or agents in process.',
         toolsUsed,
@@ -617,6 +624,13 @@ export async function sendToAgent(
       console.error('[Claude] Full error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       eventBus.emit('agent:error', { chatId, error: errorMessage, timestamp: Date.now() });
+      eventBus.emit('agent:complete', {
+        chatId,
+        text: '',
+        toolsUsed,
+        durationMs: Date.now() - agentStartTime,
+        timestamp: Date.now(),
+      });
       throw new Error(`Claude error: ${errorMessage}`);
     }
   } finally {
