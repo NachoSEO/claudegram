@@ -52,9 +52,10 @@ export function fmtTokens(n: number): string {
 }
 
 export function getProgressBar(pct: number): string {
-  const filled = Math.round(pct / 10);
+  const clamped = Math.max(0, Math.min(100, pct));
+  const filled = Math.round(clamped / 10);
   const empty = 10 - filled;
-  const color = pct >= 80 ? '🔴' : pct >= 60 ? '🟡' : '🟢';
+  const color = clamped >= 80 ? '🔴' : clamped >= 60 ? '🟡' : '🟢';
   return color + ' [' + '█'.repeat(filled) + '░'.repeat(empty) + ']';
 }
 
