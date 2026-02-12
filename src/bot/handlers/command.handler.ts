@@ -26,6 +26,7 @@ import { isMediumUrl, fetchMediumArticle, FreediumArticle } from '../../medium/f
 import { escapeMarkdownV2 as esc } from '../../telegram/markdown.js';
 import { getTTSSettings, setTTSEnabled, setTTSVoice, setTTSAutoplay } from '../../tts/tts-settings.js';
 import { getTerminalUISettings, setTerminalUIEnabled } from '../../telegram/terminal-settings.js';
+import { getTelegraphSettings, setTelegraphEnabled } from '../../telegram/telegraph-settings.js';
 import { maybeSendVoiceReply } from '../../tts/voice-reply.js';
 import { transcribeFile, downloadTelegramAudio } from '../../audio/transcribe.js';
 import { executeVReddit } from '../../reddit/vreddit.js';
@@ -267,6 +268,43 @@ function buildTTSMenu(chatId: number, mode: TTSMenuMode) {
       [
         { text: `Voice: ${settings.voice}`, callback_data: 'tts:voices' },
         { text: autoplayLabel, callback_data: 'tts:autoplay' },
+      ],
+    ],
+  };
+}
+
+function buildTelegraphMenu(chatId: number) {
+  const settings = getTelegraphSettings(chatId);
+  const globalEnabled = config.TELEGRAPH_ENABLED;
+  const globalStatus = globalEnabled ? 'enabled' : 'disabled';
+
+  const statusLine = settings.enabled ? 'ON' : 'OFF';
+  const header = `📄 *Instant View \\(Telegraph\\)*`;
+
+  const baseText =
+    `${header}\n\n` +
+    `Status: *${statusLine}*\n` +
+    `Global config: *${esc(globalStatus)}*\n\n` +
+    `_When enabled, long responses and tables are rendered as Telegraph articles with Instant View\\._`;
+
+  // If global config is disabled, show warning and no toggle
+  if (!globalEnabled) {
+    return {
+      text:
+        `${header}\n\n` +
+        `⚠️ *Disabled globally*\n\n` +
+        `Telegraph is disabled in the bot configuration\\.\n` +
+        `Set \`TELEGRAPH_ENABLED=true\` in \\.env to enable\\.`,
+      keyboard: [],
+    };
+  }
+
+  return {
+    text: baseText,
+    keyboard: [
+      [
+        { text: settings.enabled ? '✓ On' : 'On', callback_data: 'telegraph:on' },
+        { text: !settings.enabled ? '✓ Off' : 'Off', callback_data: 'telegraph:off' },
       ],
     ],
   };
@@ -953,6 +991,41 @@ export async function handleTTSCallback(ctx: Context): Promise<void> {
     ? 'voices'
     : 'main';
   const menu = buildTTSMenu(chatId, mode);
+
+  await ctx.answerCallbackQuery();
+  try {
+    await ctx.editMessageText(menu.text, {
+      parse_mode: 'MarkdownV2',
+      reply_markup: { inline_keyboard: menu.keyboard },
+    });
+  } catch (error) {
+    // Ignore "message is not modified" — happens with duplicate callbacks
+    if (!(error instanceof Error && error.message.includes('message is not modified'))) {
+      throw error;
+    }
+  }
+}
+
+export async function handleTelegraphCallback(ctx: Context): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith('telegraph:')) return;
+
+  // Don't allow enabling if global config is disabled
+  if (data === 'telegraph:on') {
+    if (!config.TELEGRAPH_ENABLED) {
+      await ctx.answerCallbackQuery({ text: 'Telegraph disabled in config. Set TELEGRAPH_ENABLED=true in .env.' });
+      setTelegraphEnabled(chatId, false);
+    } else {
+      setTelegraphEnabled(chatId, true);
+    }
+  } else if (data === 'telegraph:off') {
+    setTelegraphEnabled(chatId, false);
+  }
+
+  const menu = buildTelegraphMenu(chatId);
 
   await ctx.answerCallbackQuery();
   try {
@@ -1675,30 +1748,19 @@ export async function handleTelegraph(ctx: Context): Promise<void> {
   const text = ctx.message?.text || '';
   const filePath = text.split(' ').slice(1).join(' ').trim();
 
-  const session = sessionManager.getSession(chatId);
-  if (!session) {
-    await replyMd(ctx, '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project <path>` to open a project first\\.');
+  // If no argument provided, show the settings menu
+  if (!filePath) {
+    const menu = buildTelegraphMenu(chatId);
+    await ctx.reply(menu.text, {
+      parse_mode: 'MarkdownV2',
+      reply_markup: menu.keyboard.length > 0 ? { inline_keyboard: menu.keyboard } : undefined,
+    });
     return;
   }
 
-  if (!filePath) {
-    // List markdown files in the project
-    const mdFiles = listMarkdownFiles(session.workingDirectory);
-    const fileList = mdFiles.length > 0
-      ? `\n\n*Markdown files:*\n${mdFiles.slice(0, 10).map(f => `• \`${esc(f)}\``).join('\n')}`
-      : '\n\n_No markdown files found in project_';
-
-    await ctx.reply(
-      `📄 *Instant View*\n\n_Project: ${esc(path.basename(session.workingDirectory))}_${fileList}\n\n👇 _Enter the file path:_`,
-      {
-        parse_mode: 'MarkdownV2',
-        reply_markup: {
-          force_reply: true,
-          input_field_placeholder: 'README.md',
-          selective: true,
-        },
-      }
-    );
+  const session = sessionManager.getSession(chatId);
+  if (!session) {
+    await replyMd(ctx, '⚠️ No project set\\.\n\nIf the bot restarted, use `/continue` or `/resume` to restore your last session\\.\nOr use `/project <path>` to open a project first\\.');
     return;
   }
 
@@ -2156,17 +2218,26 @@ export async function executeMediumFetch(
       `${esc(preview)}\n\n` +
       `_${article.markdown.length} chars — choose an action:_`;
 
-    const msg = await ctx.reply(previewText, {
-      parse_mode: 'MarkdownV2',
-      reply_markup: {
-        inline_keyboard: [
+    // Build inline keyboard based on Telegraph availability
+    const inlineKeyboard = config.TELEGRAPH_ENABLED
+      ? [
           [
             { text: '📄 Telegraph', callback_data: 'medium:telegraph' },
             { text: '💾 Save .md', callback_data: 'medium:save' },
             { text: '📄💾 Both', callback_data: 'medium:both' },
           ],
-        ],
-      },
+        ]
+      : [
+          [
+            { text: '💬 Send to Chat', callback_data: 'medium:chat' },
+            { text: '💾 Save .md', callback_data: 'medium:save' },
+            { text: '💬💾 Both', callback_data: 'medium:chatboth' },
+          ],
+        ];
+
+    const msg = await ctx.reply(previewText, {
+      parse_mode: 'MarkdownV2',
+      reply_markup: { inline_keyboard: inlineKeyboard },
     });
 
     // Store result for callback handling
@@ -2211,7 +2282,8 @@ export async function handleMediumCallback(ctx: Context): Promise<void> {
   await ctx.answerCallbackQuery();
 
   const doTelegraph = action === 'telegraph' || action === 'both';
-  const doSave = action === 'save' || action === 'both';
+  const doChat = action === 'chat' || action === 'chatboth';
+  const doSave = action === 'save' || action === 'both' || action === 'chatboth';
 
   let telegraphUrl: string | null = null;
   let mdPath: string | null = null;
@@ -2234,6 +2306,9 @@ export async function handleMediumCallback(ctx: Context): Promise<void> {
     if (telegraphUrl) {
       resultText += `📄 [Open in Instant View](${esc(telegraphUrl)})\n`;
     }
+    if (doChat) {
+      resultText += `💬 Sending to chat\\.\\.\\.\n`;
+    }
     if (mdPath) {
       resultText += `💾 Markdown saved \\(${article.markdown.length} chars\\)`;
     }
@@ -2244,6 +2319,11 @@ export async function handleMediumCallback(ctx: Context): Promise<void> {
     } catch {
       // If edit fails (e.g. message too old), send new message
       await replyMd(ctx, resultText);
+    }
+
+    // Send content to chat if requested (inline messages)
+    if (doChat) {
+      await messageSender.sendMessage(ctx, article.markdown);
     }
 
     // Send .md file as document
