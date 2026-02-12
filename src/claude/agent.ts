@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import { sessionManager } from './session-manager.js';
 import { setActiveQuery, clearActiveQuery, isCancelled } from './request-queue.js';
 import { config } from '../config.js';
+import { userPreferences } from '../providers/user-preferences.js';
 
 export interface AgentUsage {
   inputTokens: number;
@@ -716,14 +717,24 @@ export function clearConversation(chatId: number): void {
 
 export function setModel(chatId: number, model: string): void {
   chatModels.set(chatId, model);
+  userPreferences.setModel(chatId, model);
 }
 
 export function getModel(chatId: number): string {
-  return chatModels.get(chatId) || 'opus';
+  // Check in-memory cache first, then persistence
+  let model = chatModels.get(chatId);
+  if (!model) {
+    model = userPreferences.getModel(chatId);
+    if (model) {
+      chatModels.set(chatId, model);
+    }
+  }
+  return model || 'opus';
 }
 
 export function clearModel(chatId: number): void {
   chatModels.delete(chatId);
+  userPreferences.clearModel(chatId);
 }
 
 export function isDangerousMode(): boolean {

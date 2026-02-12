@@ -6,7 +6,7 @@ export interface ParsedCommand {
   model: string | null;
 }
 
-const CLAUDE_COMMANDS = ['plan', 'explore', 'model', 'commands', 'loop', 'resume', 'continue', 'sessions'] as const;
+const CLAUDE_COMMANDS = ['plan', 'explore', 'model', 'commands', 'loop', 'resume', 'continue', 'sessions', 'provider'] as const;
 type ClaudeCommand = (typeof CLAUDE_COMMANDS)[number];
 
 export function parseClaudeCommand(message: string): ParsedCommand {
@@ -49,7 +49,8 @@ export function getAvailableCommands(): string {
         '• `/plan <task>` \\- Enter plan mode for complex tasks',
         '• `/explore <question>` \\- Use explore agent for codebase questions',
         '• `/loop <task>` \\- Run iteratively until task complete',
-        '• `/model \\[name\\]` \\- Show or set Claude model',
+        '• `/model \\[name\\]` \\- Show or set AI model',
+        ...(config.OPENCODE_ENABLED ? ['• `/provider` \\- Switch AI provider \\(Claude / OpenCode\\)'] : []),
         '• `/commands` \\- Show this list',
       ],
     },

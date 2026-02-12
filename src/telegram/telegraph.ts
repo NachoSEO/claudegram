@@ -1,4 +1,3 @@
-import Telegraph from 'telegra.ph';
 import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
@@ -12,8 +11,246 @@ const telegraphAccountSchema = z.object({
   short_name: z.string(),
 });
 
+
+// -------------------------
+// Telegraph API limits + Node schema validation + minimal HTTP client
+// -------------------------
+//
+// Official docs: https://telegra.ph/api
+// - title: 1-256 chars
+// - content: Array of Node, up to 64 KB (serialized JSON, UTF-8)
+// - allowed tags/attrs documented there
+
+const TELEGRAPH_TITLE_MAX_CHARS = 256;
+const TELEGRAPH_CONTENT_MAX_BYTES = 64 * 1024;
+const TELEGRAPH_AUTHOR_NAME_MAX_CHARS = 128;
+const TELEGRAPH_AUTHOR_URL_MAX_CHARS = 512;
+
+type TelegraphAccount = {
+  access_token: string;
+  auth_url: string;
+  short_name: string;
+};
+
+type TelegraphCreatePageResult = {
+  url: string;
+  path: string;
+  title: string;
+  description?: string;
+  author_name?: string;
+  author_url?: string;
+  image_url?: string;
+  content?: TelegraphNode[];
+  views?: number;
+  can_edit?: boolean;
+};
+
+type TelegraphOk<T> = { ok: true; result: T };
+type TelegraphErr = { ok: false; error: string };
+
+class TelegraphClient {
+  private token: string | null;
+
+  constructor(token?: string) {
+    this.token = token ?? null;
+  }
+
+  setToken(token: string) {
+    this.token = token;
+  }
+
+  private async call<T>(method: string, params: Record<string, any>): Promise<T> {
+    const body = new URLSearchParams();
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined) continue;
+      // Telegraph expects arrays/objects as JSON strings in form fields.
+      if (typeof value === 'string') body.set(key, value);
+      else body.set(key, JSON.stringify(value));
+    }
+
+    const res = await fetch(`https://api.telegra.ph/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+      body,
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`Telegraph API HTTP ${res.status}${txt ? `: ${txt}` : ''}`);
+    }
+
+    const json = (await res.json()) as TelegraphOk<T> | TelegraphErr;
+    if (!json.ok) throw new Error(`Telegraph API error: ${json.error}`);
+    return json.result;
+  }
+
+  async createAccount(short_name: string, author_name?: string, author_url?: string): Promise<TelegraphAccount> {
+    return this.call('createAccount', { short_name, author_name, author_url });
+  }
+
+  async createPage(
+    title: string,
+    content: TelegraphNode[],
+    author_name?: string,
+    author_url?: string,
+    return_content = false,
+  ): Promise<TelegraphCreatePageResult> {
+    if (!this.token) throw new Error('Telegraph token not set');
+    return this.call('createPage', {
+      access_token: this.token,
+      title,
+      content,
+      author_name,
+      author_url,
+      return_content,
+    });
+  }
+}
+
+// Zod schemas for Node validation (based on official docs)
+const telegraphTagSchema = z.enum([
+  'a','aside','b','blockquote','br','code','em','figcaption','figure','h3','h4','hr','i',
+  'iframe','img','li','ol','p','pre','s','strong','u','ul','video',
+]);
+
+const telegraphAttrsSchema = z
+  .object({
+    href: z.string().min(1).optional(),
+    src: z.string().min(1).optional(),
+  })
+  .strict()
+  .optional();
+
+const telegraphNodeSchema: z.ZodType<TelegraphNode> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z
+      .object({
+        tag: telegraphTagSchema,
+        attrs: telegraphAttrsSchema,
+        children: z.array(telegraphNodeSchema).optional(),
+      })
+      .strict(),
+  ]),
+);
+
+const telegraphContentSchema = z.array(telegraphNodeSchema);
+
+function validateTelegraphNodes(nodes: TelegraphNode[]): TelegraphNode[] {
+  return telegraphContentSchema.parse(nodes);
+}
+
+function clampTitle(title: string): string {
+  const t = title.trim();
+  if (t.length === 0) return 'Untitled';
+  return t.length <= TELEGRAPH_TITLE_MAX_CHARS ? t : t.slice(0, TELEGRAPH_TITLE_MAX_CHARS);
+}
+
+function clampAuthorName(author?: string): string | undefined {
+  if (!author) return undefined;
+  const a = author.trim();
+  if (a.length === 0) return undefined;
+  return a.slice(0, TELEGRAPH_AUTHOR_NAME_MAX_CHARS);
+}
+
+function clampAuthorUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  const u = url.trim();
+  if (u.length === 0) return undefined;
+  return u.slice(0, TELEGRAPH_AUTHOR_URL_MAX_CHARS);
+}
+
+function contentJsonBytes(nodes: TelegraphNode[]): number {
+  return Buffer.byteLength(JSON.stringify(nodes), 'utf8');
+}
+
+function truncateStringNodeToFit(out: TelegraphNode[], str: string, maxBytes: number): string | null {
+  // If even an empty string node can't fit, bail.
+  if (contentJsonBytes(out.concat([''])) > maxBytes) return null;
+
+  let lo = 0;
+  let hi = str.length;
+  let best = '';
+
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const candidate = str.slice(0, mid);
+    const bytes = contentJsonBytes(out.concat([candidate]));
+    if (bytes <= maxBytes) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+function truncateNodeToFit(out: TelegraphNode[], node: TelegraphNode, maxBytes: number): TelegraphNode | null {
+  if (contentJsonBytes(out.concat([node])) <= maxBytes) return node;
+
+  if (typeof node === 'string') {
+    const truncated = truncateStringNodeToFit(out, node, maxBytes);
+    return truncated === null ? null : truncated;
+  }
+
+  const base: any = { tag: node.tag };
+  if (node.attrs) base.attrs = node.attrs;
+
+  // Try without children first (works for br/hr/etc)
+  if (contentJsonBytes(out.concat([base])) <= maxBytes) return base as TelegraphNode;
+
+  const children = node.children ?? [];
+  if (children.length === 0) return null;
+
+  const newChildren: TelegraphNode[] = [];
+  for (const child of children) {
+    const candidateEl: TelegraphNode = { ...base, children: newChildren.concat([child]) };
+    if (contentJsonBytes(out.concat([candidateEl])) <= maxBytes) {
+      newChildren.push(child);
+      continue;
+    }
+
+    // Try truncating this child and then stop.
+    const truncatedChild = truncateNodeToFit([], child, TELEGRAPH_CONTENT_MAX_BYTES);
+    if (!truncatedChild) break;
+
+    const candidateEl2: TelegraphNode = { ...base, children: newChildren.concat([truncatedChild]) };
+    if (contentJsonBytes(out.concat([candidateEl2])) <= maxBytes) {
+      newChildren.push(truncatedChild);
+    }
+    break;
+  }
+
+  if (newChildren.length === 0) return null;
+
+  const finalEl: TelegraphNode = { ...base, children: newChildren };
+  return contentJsonBytes(out.concat([finalEl])) <= maxBytes ? finalEl : null;
+}
+
+function clampTelegraphContent(nodes: TelegraphNode[], maxBytes = TELEGRAPH_CONTENT_MAX_BYTES): TelegraphNode[] {
+  const validated = validateTelegraphNodes(nodes);
+
+  if (contentJsonBytes(validated) <= maxBytes) return validated;
+
+  const out: TelegraphNode[] = [];
+  for (const node of validated) {
+    if (contentJsonBytes(out.concat([node])) <= maxBytes) {
+      out.push(node);
+      continue;
+    }
+
+    const truncated = truncateNodeToFit(out, node, maxBytes);
+    if (truncated) out.push(truncated);
+    break;
+  }
+
+  return out;
+}
+
 // Telegraph client singleton
-let telegraphClient: Telegraph | null = null;
+let telegraphClient: TelegraphClient | null = null;
 let telegraphAccount: z.infer<typeof telegraphAccountSchema> | null = null;
 
 // Thresholds for when to use Telegraph vs inline
@@ -39,7 +276,7 @@ export async function initTelegraph(): Promise<void> {
       const result = raw ? telegraphAccountSchema.safeParse(raw) : { success: false as const };
 
       if (result.success) {
-        telegraphClient = new Telegraph(result.data.access_token);
+        telegraphClient = new TelegraphClient(result.data.access_token);
         telegraphAccount = result.data;
         console.log('[Telegraph] Loaded existing account');
       } else {
@@ -51,7 +288,7 @@ export async function initTelegraph(): Promise<void> {
 
     if (!telegraphClient) {
       // Create new account - need empty token first
-      telegraphClient = new Telegraph('');
+      telegraphClient = new TelegraphClient('');
 
       const account = await telegraphClient.createAccount(
         'Claudegram',
@@ -66,7 +303,7 @@ export async function initTelegraph(): Promise<void> {
       };
 
       // Set the token after creation
-      telegraphClient.token = account.access_token!;
+      telegraphClient.setToken(account.access_token!);
 
       // Save for future use
       fs.writeFileSync(accountFile, JSON.stringify(telegraphAccount, null, 2), { mode: 0o600 });
@@ -398,11 +635,14 @@ export async function createTelegraphPage(
   try {
     const content = markdownToNodes(markdown);
 
-    const page = await telegraphClient.createPage(
-      title,
-      content,
-      'Claude Agent',  // authorName
-      undefined,       // authorUrl
+    
+    const safeTitle = clampTitle(title);
+    const safeContent = clampTelegraphContent(content);
+const page = await telegraphClient.createPage(
+      safeTitle,
+      safeContent,
+      clampAuthorName('Claude Agent'),  // authorName
+      clampAuthorUrl(undefined),       // authorUrl
       false            // returnContent
     );
 
