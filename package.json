@@ -37,5 +37,8 @@
     "@types/node": "^20.17.14",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
+  },
+  "overrides": {
+    "node-fetch": "^2.7.0"
   }
 }
