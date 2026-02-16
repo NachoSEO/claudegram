@@ -1,4 +1,5 @@
 import Telegraph from 'telegra.ph';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
@@ -380,7 +381,59 @@ function parseInline(text: string): TelegraphNode[] {
 }
 
 /**
+ * Generate a random UUID for Telegraph page titles
+ * This makes URLs unguessable (e.g., telegra.ph/uuid-02-16)
+ */
+function generateUuidTitle(): string {
+  return crypto.randomUUID();
+}
+
+/**
+ * Create a Telegraph page with a UUID-based title for unguessable URLs
+ * Note: The Telegraph API ignores the 'path' parameter, so we use UUID as title
+ * The resulting URL will be like: telegra.ph/uuid-here-02-16
+ */
+async function createPageWithUuidTitle(
+  token: string,
+  displayTitle: string,
+  content: TelegraphNode[]
+): Promise<{ url: string }> {
+  // Use UUID as the actual title to make URL unguessable
+  const uuidTitle = generateUuidTitle();
+
+  // Prepend the display title as an h3 heading in the content
+  const contentWithTitle: TelegraphNode[] = [
+    { tag: 'h3', children: [displayTitle] },
+    ...content
+  ];
+
+  const response = await fetch('https://api.telegra.ph/createPage', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      access_token: token,
+      title: uuidTitle,
+      author_name: 'Claude Agent',
+      content: contentWithTitle,
+      return_content: false
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Telegraph API error: ${response.statusText}`);
+  }
+
+  const json = await response.json() as { ok: boolean; result?: { url: string }; error?: string };
+  if (!json.ok) {
+    throw new Error(json.error || 'Unknown Telegraph API error');
+  }
+
+  return { url: json.result!.url };
+}
+
+/**
  * Create a Telegraph page from markdown content
+ * Uses a UUID-based title to prevent URL guessing
  */
 export async function createTelegraphPage(
   title: string,
@@ -390,7 +443,7 @@ export async function createTelegraphPage(
     await initTelegraph();
   }
 
-  if (!telegraphClient) {
+  if (!telegraphClient || !telegraphAccount) {
     console.error('[Telegraph] Client not initialized');
     return null;
   }
@@ -398,12 +451,10 @@ export async function createTelegraphPage(
   try {
     const content = markdownToNodes(markdown);
 
-    const page = await telegraphClient.createPage(
+    const page = await createPageWithUuidTitle(
+      telegraphAccount.access_token,
       title,
-      content,
-      'Claude Agent',  // authorName
-      undefined,       // authorUrl
-      false            // returnContent
+      content
     );
 
     return page.url;
