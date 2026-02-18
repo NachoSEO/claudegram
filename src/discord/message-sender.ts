@@ -85,6 +85,8 @@ const THINKING_FRAMES = [
 const EMBED_MAX_DESCRIPTION = 4096;
 const MAX_EMBEDS_PER_MESSAGE = 10;
 const PLAIN_TEXT_THRESHOLD = 2000; // Under this: plain markdown message
+// Discord limits total chars across ALL embeds in one message to 6000
+const EMBED_TOTAL_CHAR_LIMIT = 6000;
 // If total content exceeds this, send as .md file instead of many embeds
 const FILE_FALLBACK_THRESHOLD = EMBED_MAX_DESCRIPTION * 4;
 
@@ -114,6 +116,37 @@ function buildResponseEmbeds(content: string): EmbedBuilder[] {
   }
 
   return embeds;
+}
+
+/**
+ * Group embeds into batches where each batch's total character count stays
+ * within Discord's 6000-char limit across all embeds in a single message.
+ */
+function batchEmbedsByCharLimit(embeds: EmbedBuilder[]): EmbedBuilder[][] {
+  const batches: EmbedBuilder[][] = [];
+  let currentBatch: EmbedBuilder[] = [];
+  let currentChars = 0;
+
+  for (const embed of embeds) {
+    const embedChars =
+      (embed.data.description?.length || 0) +
+      (embed.data.footer?.text?.length || 0);
+
+    if (currentBatch.length > 0 && currentChars + embedChars > EMBED_TOTAL_CHAR_LIMIT) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentChars = 0;
+    }
+
+    currentBatch.push(embed);
+    currentChars += embedChars;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
 }
 
 /**
@@ -470,7 +503,7 @@ export class DiscordMessageSender {
       }
     } catch (error) {
       console.error('[Discord] Error finishing stream:', error);
-      // Fallback: try plain text
+      // Fallback: try plain text chunks
       try {
         const fallbackParts = splitDiscordMessage(finalContent, discordConfig.DISCORD_MAX_MESSAGE_LENGTH);
         if (state.interaction) {
@@ -480,6 +513,13 @@ export class DiscordMessageSender {
           }
         } else if (state.message) {
           await state.message.edit(fallbackParts[0] || 'Done.');
+          // Send remaining chunks as follow-up messages in the channel
+          const chan = state.message.channel;
+          if ('send' in chan) {
+            for (let i = 1; i < fallbackParts.length; i++) {
+              await chan.send(fallbackParts[i]);
+            }
+          }
         }
       } catch {
         // Give up silently
@@ -499,27 +539,20 @@ export class DiscordMessageSender {
 
   private async sendAsEmbeds(state: DiscordStreamState, content: string): Promise<void> {
     const embeds = buildResponseEmbeds(content);
+    // Batch by Discord's 6000-char total embed limit (not just count)
+    const batches = batchEmbedsByCharLimit(embeds);
 
     if (state.interaction) {
-      // Edit the deferred reply with the first batch of embeds (max 10)
-      await state.interaction.editReply({ content: '', embeds: embeds.slice(0, MAX_EMBEDS_PER_MESSAGE) });
-
-      // If somehow we need more than 10 embeds, send follow-ups
-      for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
-        const batch = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
-        await state.interaction.followUp({ embeds: batch });
+      await state.interaction.editReply({ content: '', embeds: batches[0] || [] });
+      for (let i = 1; i < batches.length; i++) {
+        await state.interaction.followUp({ embeds: batches[i] });
       }
     } else if (state.message) {
-      // Edit the thinking message with the first embed
-      // message.edit only supports up to 10 embeds
-      await state.message.edit({ content: '', embeds: embeds.slice(0, MAX_EMBEDS_PER_MESSAGE) });
-
-      // Send overflow as new messages
+      await state.message.edit({ content: '', embeds: batches[0] || [] });
       const chan = state.message.channel;
-      if ('send' in chan && embeds.length > MAX_EMBEDS_PER_MESSAGE) {
-        for (let i = MAX_EMBEDS_PER_MESSAGE; i < embeds.length; i += MAX_EMBEDS_PER_MESSAGE) {
-          const batch = embeds.slice(i, i + MAX_EMBEDS_PER_MESSAGE);
-          await chan.send({ embeds: batch });
+      if ('send' in chan) {
+        for (let i = 1; i < batches.length; i++) {
+          await chan.send({ embeds: batches[i] });
         }
       }
     }
