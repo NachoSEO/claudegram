@@ -155,7 +155,8 @@ export async function handlePhoto(ctx: Context): Promise<void> {
 
   const uploadsDir = ensureUploadsDir(session.workingDirectory);
   const timestamp = Date.now();
-  const fallbackName = `photo_${timestamp}_${largest.file_unique_id}.jpg`;
+  const safeUniqueId = sanitizeFileName(largest.file_unique_id);
+  const fallbackName = `photo_${timestamp}_${safeUniqueId}.jpg`;
   const destPath = path.join(uploadsDir, fallbackName);
 
   try {

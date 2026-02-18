@@ -318,7 +318,7 @@ async function downloadWithYtDlp(url: string, outputPath: string): Promise<numbe
         '-o', outputPath,
         '--no-playlist',
         '--socket-timeout', '30',
-        url,
+        '--', url,
       ],
       { timeout: VIDEO_DOWNLOAD_TIMEOUT_SEC * 1000 },
       (error, _stdout, stderr) => {
@@ -614,6 +614,13 @@ export async function executeVReddit(ctx: Context, input: string): Promise<void>
       debugLog(`[vReddit] Video stream: ${streams.videoUrl}`);
       if (streams.audioUrl) debugLog(`[vReddit] Audio stream: ${streams.audioUrl}`);
 
+      // Validate DASH-derived stream URLs against private networks (SSRF protection)
+      if (!(await isUrlAllowed(streams.videoUrl))) {
+        debugLog('[vReddit] Blocked video stream URL (private network)');
+        await replyMd(ctx, '❌ Video stream URL blocked for security reasons\\.');
+        return;
+      }
+
       const videoExt = getUrlExtension(streams.videoUrl, '.mp4');
       const videoPath = path.join(tempDir, `video${videoExt}`);
       debugLog('[vReddit] Downloading video stream...');
@@ -624,21 +631,25 @@ export async function executeVReddit(ctx: Context, input: string): Promise<void>
       finalSize = videoSize;
 
       if (streams.audioUrl) {
-        const audioExt = getUrlExtension(streams.audioUrl, '.mp4');
-        const audioPath = path.join(tempDir, `audio${audioExt}`);
-        debugLog('[vReddit] Downloading audio stream...');
-        await downloadFile(streams.audioUrl, audioPath, VIDEO_DOWNLOAD_TIMEOUT_SEC);
+        if (!(await isUrlAllowed(streams.audioUrl))) {
+          debugLog('[vReddit] Blocked audio stream URL (private network), sending video-only');
+        } else {
+          const audioExt = getUrlExtension(streams.audioUrl, '.mp4');
+          const audioPath = path.join(tempDir, `audio${audioExt}`);
+          debugLog('[vReddit] Downloading audio stream...');
+          await downloadFile(streams.audioUrl, audioPath, VIDEO_DOWNLOAD_TIMEOUT_SEC);
 
-        const mergedPath = path.join(tempDir, 'video_merged.mp4');
-        try {
-          console.log('[vReddit] Merging video + audio...');
-          await mergeVideoAudio(videoPath, audioPath, mergedPath);
-          const stat = fs.statSync(mergedPath);
-          finalPath = mergedPath;
-          finalSize = stat.size;
-          console.log(`[vReddit] Merged: ${(finalSize / 1024 / 1024).toFixed(1)}MB`);
-        } catch (error) {
-          console.warn('[vReddit] Merge failed, sending video-only:', error);
+          const mergedPath = path.join(tempDir, 'video_merged.mp4');
+          try {
+            console.log('[vReddit] Merging video + audio...');
+            await mergeVideoAudio(videoPath, audioPath, mergedPath);
+            const stat = fs.statSync(mergedPath);
+            finalPath = mergedPath;
+            finalSize = stat.size;
+            console.log(`[vReddit] Merged: ${(finalSize / 1024 / 1024).toFixed(1)}MB`);
+          } catch (error) {
+            console.warn('[vReddit] Merge failed, sending video-only:', error);
+          }
         }
       }
     } else {

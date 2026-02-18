@@ -189,7 +189,12 @@ function parseContextOutput(raw: string): string {
   return output;
 }
 
+const SESSION_ID_RE = /^[a-zA-Z0-9_-]{8,128}$/;
+
 async function runClaudeContext(sessionId: string, cwd: string): Promise<string> {
+  if (!SESSION_ID_RE.test(sessionId)) {
+    throw new Error('Invalid session ID format');
+  }
   return new Promise((resolve, reject) => {
     execFile(
       config.CLAUDE_EXECUTABLE_PATH,
@@ -1918,10 +1923,14 @@ export async function executeRedditFetch(
     depth: config.REDDITFETCH_DEFAULT_DEPTH,
   };
 
+  const VALID_SORTS = new Set(['hot', 'new', 'top', 'rising', 'controversial', 'best']);
+  const VALID_TIMES = new Set(['hour', 'day', 'week', 'month', 'year', 'all']);
+
   for (let i = 0; i < cleanTokens.length; i++) {
     const token = cleanTokens[i];
     if (token === '--sort' && cleanTokens[i + 1]) {
-      options.sort = cleanTokens[++i];
+      const val = cleanTokens[++i];
+      if (VALID_SORTS.has(val)) options.sort = val;
     } else if (token === '--limit' && cleanTokens[i + 1]) {
       const parsed = parseInt(cleanTokens[++i], 10);
       if (!Number.isNaN(parsed) && parsed > 0) options.limit = parsed;
@@ -1932,7 +1941,8 @@ export async function executeRedditFetch(
       const parsed = parseInt(cleanTokens[++i], 10);
       if (!Number.isNaN(parsed) && parsed > 0) options.depth = parsed;
     } else if (token === '--time' && cleanTokens[i + 1]) {
-      options.timeFilter = cleanTokens[++i];
+      const val = cleanTokens[++i];
+      if (VALID_TIMES.has(val)) options.timeFilter = val;
     } else {
       targets.push(token);
     }
@@ -2002,7 +2012,7 @@ export async function executeRedditFetch(
     } else if (errorMessage.includes('timed out') || errorMessage.includes('AbortError')) {
       userMessage = '❌ Reddit fetch timed out\\.';
     } else {
-      userMessage = `❌ Reddit fetch failed: ${esc(errorMessage.substring(0, 300))}`;
+      userMessage = `❌ Reddit fetch failed: ${esc(sanitizeError(errorMessage).substring(0, 300))}`;
     }
 
     await replyMd(ctx, userMessage);
