@@ -87,11 +87,12 @@ export class AgentCache {
   /** Increment and return the new turn count. */
   incrementTurn(chatId: number): number {
     const state = this.cache.get(chatId);
-    if (state) {
-      state.turnCount += 1;
-      return state.turnCount;
+    if (!state) {
+      console.warn(`[AgentCache] incrementTurn called for unknown chat ${chatId}`);
+      return 1;
     }
-    return 1;
+    state.turnCount += 1;
+    return state.turnCount;
   }
 
   /** Get the current turn count for a chat. */

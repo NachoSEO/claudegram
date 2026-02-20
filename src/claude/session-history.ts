@@ -103,6 +103,7 @@ class SessionHistory {
     const entry: SessionHistoryEntry = {
       conversationId,
       claudeSessionId: claudeSessionId ?? existingEntry?.claudeSessionId,
+      openaiConversationId: existingEntry?.openaiConversationId,
       projectPath,
       projectName,
       lastMessagePreview: lastMessagePreview.substring(0, 100),

@@ -207,10 +207,17 @@ export class OpenAIProvider implements AgentProvider {
       // Extract usage from the run
       const usage = result.state.usage;
       const turnCount = this.agentCache.incrementTurn(chatId);
+
+      // Sum cached_tokens from inputTokensDetails across all requests
+      let cacheReadTokens = 0;
+      for (const details of usage.inputTokensDetails) {
+        cacheReadTokens += details['cached_tokens'] ?? 0;
+      }
+
       resultUsage = {
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
-        cacheReadTokens: 0,
+        cacheReadTokens,
         cacheWriteTokens: 0,
         totalCostUsd: 0,
         contextWindow,

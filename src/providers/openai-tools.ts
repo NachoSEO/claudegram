@@ -336,8 +336,16 @@ function applyUnifiedDiff(original: string, diff: string): string {
       // Add line
       result.push(line.slice(1));
     } else if (line.startsWith(' ')) {
-      // Context line — copy from original
-      result.push(originalLines[originalIdx]);
+      // Context line — verify match, then copy from original
+      const expected = line.slice(1);
+      const actual = originalLines[originalIdx];
+      if (actual !== expected) {
+        throw new Error(
+          `Diff context mismatch at line ${originalIdx + 1}: ` +
+          `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+        );
+      }
+      result.push(actual);
       originalIdx++;
     }
   }
