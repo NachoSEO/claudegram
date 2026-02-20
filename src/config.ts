@@ -15,8 +15,11 @@ const envSchema = z.object({
     .default('')
     .transform((val) => val ? val.split(',').map((id) => parseInt(id.trim(), 10)) : []),
   ANTHROPIC_API_KEY: z.string().optional(), // Optional - uses Claude Max subscription if not set
-  // OpenAI (TTS)
+  // OpenAI (TTS + optional agent provider)
   OPENAI_API_KEY: z.string().optional(),
+  // Agent provider: 'claude' (Agent SDK) or 'openai' (Chat Completions API)
+  AGENT_PROVIDER: z.enum(['claude', 'openai']).default('claude'),
+  OPENAI_DEFAULT_MODEL: z.string().default('gpt-5.2'),
   WORKSPACE_DIR: z.string().default(process.env.HOME || '.'),
   CLAUDE_EXECUTABLE_PATH: z.string().default('claude'),
   CLAUDE_USE_BUNDLED_EXECUTABLE: z

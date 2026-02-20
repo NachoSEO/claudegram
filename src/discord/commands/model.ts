@@ -7,25 +7,24 @@ import {
 } from 'discord.js';
 import { discordChatId } from '../id-mapper.js';
 import { setModel, getModel } from '../../claude/agent.js';
+import { getAvailableModels } from '../../providers/model-catalog.js';
 
-/**
- * Presents a model selection menu to the invoking user and updates the stored model when they make a choice.
- *
- * Sends an ephemeral reply showing the current model and a select menu (options: Opus, Sonnet, Haiku) with the current model preselected, listens for the user's selection for up to 60 seconds, updates the stored model for the user's chatId, and edits the reply to confirm the new model.
- *
- * @param interaction - The chat input command interaction that triggered the selector; the reply and selection are handled via this interaction
- */
 export async function handleModel(interaction: ChatInputCommandInteraction): Promise<void> {
   const chatId = discordChatId(interaction.user.id);
   const current = getModel(chatId);
+  const models = getAvailableModels();
 
   const select = new StringSelectMenuBuilder()
     .setCustomId('model-select')
     .setPlaceholder(`Current: ${current}`)
     .addOptions(
-      new StringSelectMenuOptionBuilder().setLabel('Opus').setDescription('Most capable model').setValue('opus').setDefault(current === 'opus'),
-      new StringSelectMenuOptionBuilder().setLabel('Sonnet').setDescription('Balanced speed and capability').setValue('sonnet').setDefault(current === 'sonnet'),
-      new StringSelectMenuOptionBuilder().setLabel('Haiku').setDescription('Fastest model').setValue('haiku').setDefault(current === 'haiku'),
+      ...models.map(m =>
+        new StringSelectMenuOptionBuilder()
+          .setLabel(m.label)
+          .setDescription(m.description)
+          .setValue(m.id)
+          .setDefault(current === m.id),
+      ),
     );
 
   const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);

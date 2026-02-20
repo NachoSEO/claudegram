@@ -3,6 +3,7 @@ import { discordChatId } from '../id-mapper.js';
 import { sessionManager } from '../../claude/session-manager.js';
 import { getModel, getCachedUsage, isDangerousMode } from '../../claude/agent.js';
 import { isProcessing } from '../../claude/request-queue.js';
+import { config } from '../../config.js';
 
 /**
  * Sends a concise status summary of the bot and the user's current session to the invoking Discord interaction.
@@ -26,6 +27,7 @@ export async function handleStatus(interaction: ChatInputCommandInteraction): Pr
 
   if (session) {
     lines.push(`**Project:** \`${session.workingDirectory}\``);
+    lines.push(`**Provider:** ${config.AGENT_PROVIDER}`);
     lines.push(`**Model:** ${model}`);
     lines.push(`**Processing:** ${processing ? 'Yes' : 'No'}`);
     lines.push(`**Dangerous Mode:** ${dangerous ? 'ENABLED' : 'Disabled'}`);

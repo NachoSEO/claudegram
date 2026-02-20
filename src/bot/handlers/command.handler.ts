@@ -10,6 +10,7 @@ import {
   getCachedUsage,
 } from '../../claude/agent.js';
 import { config } from '../../config.js';
+import { getAvailableModels, isValidModel } from '../../providers/model-catalog.js';
 import { messageSender } from '../../telegram/message-sender.js';
 import { getUptimeFormatted } from '../middleware/stale-filter.js';
 import { getAvailableCommands } from '../../claude/command-parser.js';
@@ -1191,20 +1192,22 @@ export async function handleModelCommand(ctx: Context): Promise<void> {
   const text = ctx.message?.text || '';
   const args = text.split(' ').slice(1).join(' ').trim().toLowerCase();
 
-  const validModels = ['sonnet', 'opus', 'haiku'];
+  const models = getAvailableModels();
 
   if (!args) {
     const currentModel = getModel(chatId);
 
     // Show inline keyboard for model selection
-    const keyboard = validModels.map((model) => {
-      const isCurrent = model === currentModel;
-      const label = isCurrent ? `✓ ${model}` : model;
-      return [{ text: label, callback_data: `model:${model}` }];
+    const keyboard = models.map((m) => {
+      const isCurrent = m.id === currentModel;
+      const label = isCurrent ? `✓ ${m.label}` : m.label;
+      return [{ text: label, callback_data: `model:${m.id}` }];
     });
 
+    const modelList = models.map(m => `• *${esc(m.id)}* \\- ${esc(m.description)}`).join('\n');
+
     await ctx.reply(
-      `🤖 *Select Model*\n\n_Current: ${esc(currentModel)}_\n\n• *opus* \\- Most capable \\(default\\)\n• *sonnet* \\- Balanced\n• *haiku* \\- Fast & light`,
+      `🤖 *Select Model* \\(${esc(config.AGENT_PROVIDER)}\\)\n\n_Current: ${esc(currentModel)}_\n\n${modelList}`,
       {
         parse_mode: 'MarkdownV2',
         reply_markup: {
@@ -1215,8 +1218,9 @@ export async function handleModelCommand(ctx: Context): Promise<void> {
     return;
   }
 
-  if (!validModels.includes(args)) {
-    await replyMd(ctx, `❌ Unknown model "${esc(args)}"\\.\n\nAvailable: ${validModels.join(', ')}`);
+  if (!isValidModel(args)) {
+    const validIds = models.map(m => m.id).join(', ');
+    await replyMd(ctx, `❌ Unknown model "${esc(args)}"\\.\n\nAvailable: ${esc(validIds)}`);
     return;
   }
 
@@ -1232,9 +1236,8 @@ export async function handleModelCallback(ctx: Context): Promise<void> {
   if (!data || !data.startsWith('model:')) return;
 
   const model = data.replace('model:', '');
-  const validModels = ['sonnet', 'opus', 'haiku'];
 
-  if (!validModels.includes(model)) {
+  if (!isValidModel(model)) {
     await ctx.answerCallbackQuery({ text: 'Invalid model' });
     return;
   }

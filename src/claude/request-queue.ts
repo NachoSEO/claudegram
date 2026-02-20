@@ -1,4 +1,4 @@
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import type { Cancellable } from '../providers/types.js';
 import { eventBus } from '../dashboard/event-bus.js';
 
 type QueuedRequest<T> = {
@@ -9,7 +9,7 @@ type QueuedRequest<T> = {
 };
 
 const activeAbortControllers: Map<number, AbortController> = new Map();
-const activeQueries: Map<number, Query> = new Map();
+const activeQueries: Map<number, Cancellable> = new Map();
 const pendingQueues: Map<number, Array<QueuedRequest<unknown>>> = new Map();
 const processingFlags: Map<number, boolean> = new Map();
 // Tracks chats where a cancel was initiated — checked by agent.ts to detect
@@ -28,7 +28,7 @@ export function clearAbortController(chatId: number): void {
   activeAbortControllers.delete(chatId);
 }
 
-export function setActiveQuery(chatId: number, q: Query): void {
+export function setActiveQuery(chatId: number, q: Cancellable): void {
   activeQueries.set(chatId, q);
 }
 
