@@ -68,7 +68,14 @@ function getSequentializeKey(ctx: Context): string | undefined {
 }
 
 export async function createBot(): Promise<Bot> {
-  const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
+  const bot = new Bot(config.TELEGRAM_BOT_TOKEN, {
+    client: {
+      // Default is 500s which causes long hangs on network interruptions.
+      // 60s is enough for long polling (30s) + file uploads while recovering
+      // from stuck connections much faster.
+      timeoutSeconds: 60,
+    },
+  });
 
   // Auto-retry on transient network errors (ECONNRESET, socket hang up, etc.)
   // Also handles 429 rate limits by respecting Telegram's retry_after
