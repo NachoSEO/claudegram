@@ -59,13 +59,16 @@ export function createFsuiteTools(cwd: string) {
       name: 'ftree',
       description:
         'Show a tree view of the project directory structure. ' +
-        'Accepts optional flags: --depth <n>, --show-hidden, --show-size, --dirs-only, ' +
-        '--filter <glob>, --hide-excluded. No arguments = full tree from cwd.',
+        'Flags: -L <n> (depth, default 3), -o pretty|paths|json (output format), ' +
+        '-d (dirs only), -s (show sizes), -r/--recon (per-dir item counts + sizes), ' +
+        '--snapshot (combined recon + tree), -I <pattern> (extra ignores), ' +
+        '--include <name> (un-ignore a dir), --hide-excluded (suppress excluded summaries). ' +
+        'No arguments = full tree from cwd at depth 3.',
       parameters: z.object({
         args: z
           .string()
           .optional()
-          .describe('CLI arguments, e.g. "--depth 2 --show-size" or "src/"'),
+          .describe('CLI arguments, e.g. "-L 5 src/" or "--recon -o json" or "--snapshot"'),
       }),
       execute: async (input) => {
         const args = input.args ? input.args.split(/\s+/) : [];
@@ -114,13 +117,15 @@ export function createFsuiteTools(cwd: string) {
       name: 'fmap',
       description:
         'Code cartography — extract symbols (functions, classes, types, imports) from source files. ' +
-        'Supports 15+ languages. Usage: fmap [path] [flags]. ' +
-        'Flags: --imports, --depth <n>, --type <ext>.',
+        'Supports 12 languages (Python, JS, TS, Rust, Go, Java, C, C++, Ruby, Lua, PHP, Bash). ' +
+        'Modes: fmap <dir> (scan all files), fmap <file> (single file), piped: fsearch -o paths "*.py" | fmap. ' +
+        'Flags: -o pretty|paths|json, -t <type> (function|class|import|type|export|constant), ' +
+        '-L <lang> (force language), -m <n> (max symbols), -n <n> (max files), --no-imports.',
       parameters: z.object({
         args: z
           .string()
           .optional()
-          .describe('CLI arguments, e.g. "src/ --imports" or "--type ts --depth 2"'),
+          .describe('CLI arguments, e.g. "src/" or "-t function -o json" or "-L python src/"'),
       }),
       execute: async (input) => {
         const args = input.args ? input.args.split(/\s+/) : [];
@@ -131,13 +136,16 @@ export function createFsuiteTools(cwd: string) {
     tool({
       name: 'fmetrics',
       description:
-        'Code metrics — lines of code, comment ratio, complexity estimates per file or directory. ' +
-        'Usage: fmetrics [path] [flags]. Flags: --type <ext>, --sort <metric>, --top <n>.',
+        'Performance telemetry and analytics for fsuite tools. ' +
+        'Subcommands: stats (usage dashboard), history (recent runs), predict <path> (estimate runtimes), ' +
+        'profile (machine info), import (ingest telemetry), clean (prune old data). ' +
+        'Flags: -o pretty|json. History: --tool <name>, --project <name>, --limit <n>. ' +
+        'Predict: --tool <name>. Clean: --days <n>, --dry-run.',
       parameters: z.object({
         args: z
           .string()
           .optional()
-          .describe('CLI arguments, e.g. "src/ --sort loc --top 10"'),
+          .describe('CLI arguments, e.g. "stats -o json" or "history --tool ftree --limit 10" or "predict /project"'),
       }),
       execute: async (input) => {
         const args = input.args ? input.args.split(/\s+/) : [];
