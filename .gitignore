@@ -9,6 +9,7 @@ dist/
 __pycache__/
 storage_state.json
 output/
+.playwright-mcp/
 
 # Local-only dev docs (not for public repos)
 CLAUDE.md
