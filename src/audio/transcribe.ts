@@ -79,7 +79,7 @@ export async function transcribeFile(filePath: string, options?: TranscribeOptio
         body: retryFormData,
         signal: AbortSignal.timeout(timeoutMs),
         dispatcher,
-      } as RequestInit);
+      } as unknown as RequestInit);
     }
   }
 

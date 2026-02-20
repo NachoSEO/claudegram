@@ -152,7 +152,7 @@ async function groqTTSSingle(text: string, voice: string): Promise<Buffer> {
         ...fetchOpts,
         body: JSON.stringify(payload),
         dispatcher,
-      } as RequestInit);
+      } as unknown as RequestInit);
     }
   }
 
