@@ -298,6 +298,7 @@ export class OpenAIProvider implements AgentProvider {
         eventBus.emit('agent:tool_start', {
           chatId: ref.chatId,
           toolName,
+          input: toolInput,
           timestamp: Date.now(),
         });
       }

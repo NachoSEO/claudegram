@@ -76,17 +76,17 @@ export function createFsuiteTools(cwd: string) {
     tool({
       name: 'fsearch',
       description:
-        'Fast filename and path search using glob patterns and extensions. ' +
-        "Usage: fsearch <pattern_or_ext> [path] [flags]. " +
+        'Fast filename and path search using glob patterns and extensions (NOT content search). ' +
+        "Usage: fsearch <pattern_or_ext> [path]. " +
         "Pattern examples: 'upscale*' (starts-with), '*progress*' (contains), " +
         "'.log' or 'log' (extension search), '*error' (ends-with). " +
-        'Flags: -i (case-insensitive), --type <ext>, --depth <n>, -l (list paths only).',
+        'Flags: -m <n> (max results), -o pretty|paths|json (output format), -b auto|find|fd (backend).',
       parameters: z.object({
         query: z.string().describe("Glob pattern or file extension to search for, e.g. '*.ts', 'config*', '.log'"),
         args: z
           .string()
           .optional()
-          .describe('Additional CLI arguments, e.g. "--type ts --depth 3 src/"'),
+          .describe('Additional CLI arguments, e.g. "--output json --max 20 src/"'),
       }),
       execute: async (input) => {
         const args = [input.query];
