@@ -6,6 +6,7 @@
  */
 
 import { run, Agent } from '@openai/agents';
+import { setDefaultOpenAIClient } from '@openai/agents-openai';
 import type { RunStreamEvent } from '@openai/agents';
 
 import { config } from '../config.js';
@@ -15,6 +16,7 @@ import { eventBus } from '../dashboard/event-bus.js';
 import { contextMonitor } from '../claude/context-monitor.js';
 import { stripReasoningSummary } from './system-prompt.js';
 import { AgentCache } from './openai-agent-cache.js';
+import { hasOAuthTokens, getAuthenticatedClient } from './openai-auth.js';
 
 import type {
   AgentProvider,
@@ -99,11 +101,47 @@ export class OpenAIProvider implements AgentProvider {
   private readonly chatUsageCache = new Map<number, AgentUsage>();
   private readonly toolCallbackRefs = new Map<number, ToolCallbackRef>();
 
+  private authMode: 'api-key' | 'oauth' = 'api-key';
+
   constructor() {
-    if (!config.OPENAI_API_KEY) {
-      throw new Error('[OpenAI] OPENAI_API_KEY is required when AGENT_PROVIDER=openai');
+    if (config.OPENAI_API_KEY) {
+      this.authMode = 'api-key';
+      console.log(`[OpenAI] Auth: API key, default model: ${config.OPENAI_DEFAULT_MODEL}`);
+    } else if (hasOAuthTokens()) {
+      this.authMode = 'oauth';
+      console.log(`[OpenAI] Auth: OAuth (ChatGPT Pro), default model: ${config.OPENAI_DEFAULT_MODEL}`);
+    } else {
+      throw new Error(
+        '[OpenAI] No auth configured. Either:\n' +
+        '  1. Set OPENAI_API_KEY in .env, or\n' +
+        '  2. Run: npx tsx scripts/openai-login.ts (to use your ChatGPT Pro account)',
+      );
     }
-    console.log(`[OpenAI] Agents SDK provider initialized, default model: ${config.OPENAI_DEFAULT_MODEL}`);
+  }
+
+  /**
+   * Initialize the OAuth client if using Pro subscription auth.
+   * Must be called before first send() — called lazily on first use.
+   */
+  private lastOAuthToken: string | undefined;
+  /**
+   * Ensure OAuth client is set and token is fresh.
+   * Re-injects client when token changes (after refresh).
+   */
+  private async ensureOAuthClient(): Promise<void> {
+    if (this.authMode !== 'oauth') return;
+    const client = await getAuthenticatedClient();
+    if (!client) {
+      throw new Error(
+        '[OpenAI] OAuth tokens expired or invalid. Re-run: npx tsx scripts/openai-login.ts',
+      );
+    }
+    // Only re-inject if token changed (initial set or post-refresh)
+    const currentToken = (client as unknown as { apiKey: string }).apiKey;
+    if (currentToken !== this.lastOAuthToken) {
+      setDefaultOpenAIClient(client);
+      this.lastOAuthToken = currentToken;
+    }
   }
 
   async send(
@@ -112,6 +150,9 @@ export class OpenAIProvider implements AgentProvider {
     options: AgentOptions,
   ): Promise<AgentResponse> {
     const { onProgress, onToolStart, onToolEnd, abortController, command, model, platform } = options;
+
+    // Ensure OAuth client is initialized (no-op for API key auth)
+    await this.ensureOAuthClient();
 
     const session = sessionManager.getSession(chatId);
     if (!session) {
