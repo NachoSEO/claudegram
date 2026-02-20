@@ -315,7 +315,7 @@ function applyUnifiedDiff(original: string, diff: string): string {
     // Parse hunk header: @@ -start,count +start,count @@
     const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/);
     if (hunkMatch) {
-      const hunkStart = parseInt(hunkMatch[1], 10) - 1; // 0-indexed
+      const hunkStart = Math.max(parseInt(hunkMatch[1], 10) - 1, originalIdx); // 0-indexed, clamp to current position
       // Copy lines before this hunk
       while (originalIdx < hunkStart) {
         result.push(originalLines[originalIdx]);
@@ -383,7 +383,7 @@ function createReadFileTool(cwd: string) {
         const content = await fs.promises.readFile(target, 'utf8');
         let lines = content.split('\n');
 
-        const offset = (input.offset ?? 1) - 1; // convert to 0-indexed
+        const offset = Math.max(0, (input.offset ?? 1) - 1); // convert to 0-indexed, clamp
         const limit = input.limit ?? lines.length;
         lines = lines.slice(offset, offset + limit);
 

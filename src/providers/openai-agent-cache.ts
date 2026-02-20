@@ -44,6 +44,11 @@ export class AgentCache {
       return existing;
     }
 
+    // Clean up old session server-side if being replaced (best-effort)
+    if (existing?.session) {
+      existing.session.clearSession().catch(() => {});
+    }
+
     // Create fresh Agent with fsuite tools scoped to cwd
     const tools = createFsuiteTools(cwd, config.DANGEROUS_MODE);
     const agent = new Agent({

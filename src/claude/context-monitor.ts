@@ -1,4 +1,5 @@
 import { Api } from 'grammy';
+import { escapeMarkdownV2 } from '../telegram/markdown.js';
 import { eventBus } from '../dashboard/event-bus.js';
 import type { AgentCompleteEvent } from '../dashboard/types.js';
 
@@ -70,8 +71,9 @@ export class ContextMonitor {
 
     if (contextWindow <= 0) return;
 
-    const usedTokens = inputTokens + outputTokens + cacheReadTokens;
-    const remainingPct = Math.round(((contextWindow - usedTokens) / contextWindow) * 100);
+    // Active context = input + output (cache reads don't consume context window)
+    const usedTokens = inputTokens + outputTokens;
+    const remainingPct = Math.round(Math.max(0, Math.min(100, ((contextWindow - usedTokens) / contextWindow) * 100)));
 
     // Get or create state for this chat
     let state = this.states.get(chatId);
@@ -107,25 +109,26 @@ export class ContextMonitor {
       ? 'CRITICAL — context almost exhausted'
       : 'LOW CONTEXT WARNING';
 
-    const usedTokens = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens;
+    const usedTokens = usage.inputTokens + usage.outputTokens;
     const usedStr = this.formatTokens(usedTokens);
     const totalStr = this.formatTokens(usage.contextWindow);
 
+    const esc = escapeMarkdownV2;
     const message = [
-      `${emoji} *${urgency}*`,
+      `${emoji} *${esc(urgency)}*`,
       '',
-      `Context remaining: *${remainingPct}%*`,
-      `Tokens: ${usedStr} / ${totalStr}`,
-      `Cost so far: $${usage.totalCostUsd.toFixed(4)}`,
-      `Turns: ${usage.numTurns}`,
+      `Context remaining: *${esc(String(remainingPct))}%*`,
+      `Tokens: ${esc(usedStr)} / ${esc(totalStr)}`,
+      `Cost so far: \\$${esc(usage.totalCostUsd.toFixed(4))}`,
+      `Turns: ${esc(String(usage.numTurns))}`,
       '',
       isCritical
-        ? '_Wrap up now or use /handoff to save context before compaction._'
-        : '_Consider wrapping up soon or using /handoff to preserve context._',
+        ? '_Wrap up now or use /handoff to save context before compaction\\._'
+        : '_Consider wrapping up soon or using /handoff to preserve context\\._',
     ].join('\n');
 
     try {
-      await this.api.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+      await this.api.sendMessage(chatId, message, { parse_mode: 'MarkdownV2' });
       console.log(`[ContextMonitor] Alert sent: chat=${chatId} remaining=${remainingPct}% threshold=${threshold}%`);
     } catch (err) {
       // Fallback to plain text if Markdown fails
@@ -142,7 +145,9 @@ export class ContextMonitor {
           : 'Consider wrapping up soon or using /handoff to preserve context.',
       ].join('\n');
 
-      await this.api.sendMessage(chatId, plainMessage).catch(() => {});
+      await this.api.sendMessage(chatId, plainMessage).catch((fallbackErr) => {
+        console.error(`[ContextMonitor] Fallback send also failed for chat ${chatId}:`, fallbackErr);
+      });
     }
   }
 
