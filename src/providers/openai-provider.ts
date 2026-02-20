@@ -167,6 +167,7 @@ export class OpenAIProvider implements AgentProvider {
       const result = await this.runWithStaleRecovery(
         chatId,
         agentState,
+        platform,
         prompt,
         controller,
       );
@@ -285,6 +286,7 @@ export class OpenAIProvider implements AgentProvider {
   private async runWithStaleRecovery(
     chatId: number,
     agentState: ReturnType<AgentCache['getOrCreate']>,
+    platform: AgentOptions['platform'],
     prompt: string,
     controller: AbortController,
   ) {
@@ -311,6 +313,7 @@ export class OpenAIProvider implements AgentProvider {
         chatId,
         agentState.model,
         agentState.cwd,
+        platform,
       );
 
       return await run(freshState.agent, prompt, {

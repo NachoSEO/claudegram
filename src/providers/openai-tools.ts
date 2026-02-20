@@ -315,7 +315,13 @@ function applyUnifiedDiff(original: string, diff: string): string {
     // Parse hunk header: @@ -start,count +start,count @@
     const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/);
     if (hunkMatch) {
-      const hunkStart = Math.max(parseInt(hunkMatch[1], 10) - 1, originalIdx); // 0-indexed, clamp to current position
+      const hunkStart = parseInt(hunkMatch[1], 10) - 1; // 0-indexed
+      if (hunkStart < originalIdx) {
+        throw new Error(
+          `Diff hunk out of order: hunk starts at line ${hunkStart + 1} ` +
+          `but already at line ${originalIdx + 1}`,
+        );
+      }
       // Copy lines before this hunk
       while (originalIdx < hunkStart) {
         result.push(originalLines[originalIdx]);
@@ -330,7 +336,15 @@ function applyUnifiedDiff(original: string, diff: string): string {
     }
 
     if (line.startsWith('-')) {
-      // Remove line — skip it in original
+      // Remove line — verify it matches before skipping
+      const expected = line.slice(1);
+      const actual = originalLines[originalIdx];
+      if (actual !== expected) {
+        throw new Error(
+          `Diff removal mismatch at line ${originalIdx + 1}: ` +
+          `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+        );
+      }
       originalIdx++;
     } else if (line.startsWith('+')) {
       // Add line

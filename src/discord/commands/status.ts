@@ -37,9 +37,10 @@ export async function handleStatus(interaction: ChatInputCommandInteraction): Pr
     }
 
     if (usage) {
-      const total = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens;
-      const pct = usage.contextWindow > 0 ? Math.round((total / usage.contextWindow) * 100) : 0;
-      lines.push(`\n**Context:** ${total.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens (${pct}%)`);
+      // Active context = input + output (cache reads don't consume context window)
+      const activeTokens = usage.inputTokens + usage.outputTokens;
+      const pct = usage.contextWindow > 0 ? Math.round((activeTokens / usage.contextWindow) * 100) : 0;
+      lines.push(`\n**Context:** ${activeTokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens (${pct}%)`);
       lines.push(`**Cost:** $${usage.totalCostUsd.toFixed(4)}`);
       lines.push(`**Turns:** ${usage.numTurns}`);
     }
