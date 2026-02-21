@@ -6,9 +6,9 @@
  * backend does not support OpenAIConversationsSession or previousResponseId.
  */
 
-import { run, Agent } from '@openai/agents';
+import { run, Agent, user, assistant } from '@openai/agents';
 import { setDefaultOpenAIClient } from '@openai/agents-openai';
-import type { RunStreamEvent } from '@openai/agents';
+import type { RunStreamEvent, AgentInputItem } from '@openai/agents';
 
 import { config } from '../config.js';
 import { sessionManager } from '../claude/session-manager.js';
@@ -329,22 +329,20 @@ export class OpenAIProvider implements AgentProvider {
   }
 
   /**
-   * Build the input string for run() from conversation history + new message.
-   * Concatenates history into a single string prompt for the model.
-   * The Agent's `instructions` (system prompt) is set separately.
+   * Build run() input as AgentInputItem[].
+   *
+   * Codex responses require input to be a list (not a plain string).
+   * We preserve history as explicit user/assistant message items.
    */
   private buildInput(
     history: HistoryItem[],
     newMessage: string,
-  ): string {
-    if (history.length === 0) {
-      return newMessage;
-    }
-    // Build a conversation transcript the model can follow
-    const transcript = history
-      .map((item) => `${item.role === 'user' ? 'User' : 'Assistant'}: ${item.content}`)
-      .join('\n\n');
-    return `${transcript}\n\nUser: ${newMessage}`;
+  ): AgentInputItem[] {
+    const items: AgentInputItem[] = history.map((item) =>
+      item.role === 'user' ? user(item.content) : assistant(item.content),
+    );
+    items.push(user(newMessage));
+    return items;
   }
 
   /**
