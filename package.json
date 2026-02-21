@@ -19,8 +19,12 @@
   ],
   "author": "",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.44",
+    "@opencode-ai/sdk": "^1.1.53",
     "@grammyjs/auto-retry": "^2.0.2",
     "@grammyjs/runner": "^2.0.3",
     "@types/turndown": "^5.0.6",

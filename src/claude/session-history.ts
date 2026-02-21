@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { z } from 'zod';
+import { atomicWriteFileSync } from '../utils/atomic-write.js';
 
 // Zod schema for session history entry
 const sessionHistoryEntrySchema = z.object({
@@ -70,7 +71,7 @@ class SessionHistory {
 
   private save(): void {
     try {
-      fs.writeFileSync(HISTORY_FILE, JSON.stringify(this.data, null, 2), { mode: 0o600 });
+      atomicWriteFileSync(HISTORY_FILE, JSON.stringify(this.data, null, 2), { mode: 0o600 });
     } catch (error) {
       console.error('[SessionHistory] Failed to save:', error);
     }

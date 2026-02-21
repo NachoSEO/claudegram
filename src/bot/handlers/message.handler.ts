@@ -1,5 +1,5 @@
 import { Context } from 'grammy';
-import { sendToAgent, sendLoopToAgent, clearConversation, type AgentUsage } from '../../claude/agent.js';
+import { sendToAgent, sendLoopToAgent, clearConversation, type AgentUsage } from '../../providers/provider-router.js';
 import { sessionManager } from '../../claude/session-manager.js';
 import { config } from '../../config.js';
 import { messageSender } from '../../telegram/message-sender.js';

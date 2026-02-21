@@ -27,6 +27,8 @@ import {
   handleCommands,
   handleModelCommand,
   handleModelCallback,
+  handleProviderCommand,
+  handleProviderCallback,
   handlePlan,
   handleExplore,
   handleResume,
@@ -110,6 +112,7 @@ export async function createBot(): Promise<Bot> {
     { command: 'file', description: '📎 Download a file from project' },
     { command: 'telegraph', description: '📄 View markdown with Instant View' },
     { command: 'model', description: '🤖 Switch AI model' },
+    ...(config.OPENCODE_ENABLED ? [{ command: 'provider', description: '🔌 Switch AI provider' }] : []),
     { command: 'mode', description: '⚙️ Toggle streaming mode' },
     { command: 'terminalui', description: '🖥️ Toggle terminal-style display' },
     { command: 'tts', description: '🔊 Toggle voice replies' },
@@ -150,6 +153,9 @@ export async function createBot(): Promise<Bot> {
 
   bot.command('commands', handleCommands);
   bot.command('model', handleModelCommand);
+  if (config.OPENCODE_ENABLED) {
+    bot.command('provider', handleProviderCommand);
+  }
   bot.command('plan', handlePlan);
   bot.command('explore', handleExplore);
 
@@ -195,6 +201,8 @@ export async function createBot(): Promise<Bot> {
 
     if (data.startsWith('resume:')) {
       await handleResumeCallback(ctx);
+    } else if (data.startsWith('provider:')) {
+      await handleProviderCallback(ctx);
     } else if (data.startsWith('model:')) {
       await handleModelCallback(ctx);
     } else if (data.startsWith('mode:')) {

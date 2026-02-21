@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { z } from 'zod';
+import { atomicWriteFileSync } from '../utils/atomic-write.js';
 
 // Zod schema for TTS settings
 const ttsSettingsSchema = z.object({
@@ -96,7 +97,7 @@ function saveSettings(): void {
   }
 
   try {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ settings }, null, 2), { mode: 0o600 });
+    atomicWriteFileSync(SETTINGS_FILE, JSON.stringify({ settings }, null, 2), { mode: 0o600 });
   } catch (error) {
     console.error('[TTS] Failed to save settings:', error);
   }

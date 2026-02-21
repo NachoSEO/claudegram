@@ -4,6 +4,7 @@ import * as path from 'path';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { isTelegraphEnabled } from './telegraph-settings.js';
+import { atomicWriteFileSync } from '../utils/atomic-write.js';
 
 // Zod schema for Telegraph account file
 const telegraphAccountSchema = z.object({
@@ -81,7 +82,7 @@ export async function initTelegraph(): Promise<void> {
     };
 
     // Save for future use
-    fs.writeFileSync(accountFile, JSON.stringify(telegraphAccount, null, 2), { mode: 0o600 });
+    atomicWriteFileSync(accountFile, JSON.stringify(telegraphAccount, null, 2), { mode: 0o600 });
     console.log('[Telegraph] Created new account');
   } catch (error) {
     console.error('[Telegraph] Failed to initialize:', error);
