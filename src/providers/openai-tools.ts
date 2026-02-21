@@ -25,6 +25,10 @@ import type { Tool } from '@openai/agents-core';
 const MAX_OUTPUT_BYTES = 32_000;
 /** Per-tool execution timeout in ms. */
 const TOOL_TIMEOUT_MS = 30_000;
+/** Hard cap for model-provided shell timeout. */
+const MAX_SHELL_TIMEOUT_MS = 120_000;
+/** Hard cap for model-provided shell output bytes. */
+const MAX_SHELL_OUTPUT_BYTES = 128_000;
 
 interface ShellCommandResult {
   stdout: string;
@@ -127,6 +131,12 @@ function isSensitiveFile(resolvedPath: string): boolean {
     if (resolvedPath.includes(segment)) return true;
   }
   return false;
+}
+
+function assertNotSensitivePath(resolvedPath: string, originalPath: string): void {
+  if (isSensitiveFile(resolvedPath)) {
+    throw new Error(`[denied] Cannot modify sensitive file: ${originalPath}`);
+  }
 }
 
 /**
@@ -249,6 +259,7 @@ class LocalEditor {
   ): Promise<PatchOperationResult> {
     try {
       const target = validatePath(this.cwd, operation.path, true);
+      assertNotSensitivePath(target, operation.path);
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
       const content =
         typeof operation.content === 'string'
@@ -271,6 +282,7 @@ class LocalEditor {
   ): Promise<PatchOperationResult> {
     try {
       const target = validatePath(this.cwd, operation.path);
+      assertNotSensitivePath(target, operation.path);
       const original = await fs.promises.readFile(target, 'utf8');
       const patched = applyUnifiedDiff(original, operation.diff);
       await fs.promises.writeFile(target, patched, 'utf8');
@@ -285,6 +297,7 @@ class LocalEditor {
   ): Promise<PatchOperationResult> {
     try {
       const target = validatePath(this.cwd, operation.path);
+      assertNotSensitivePath(target, operation.path);
       await fs.promises.unlink(target);
       return { status: 'completed', output: `Deleted ${operation.path}` };
     } catch (err) {
@@ -301,15 +314,21 @@ function extractContentFromDiff(diff: string): string {
   const lines = diff.split('\n');
   const contentLines: string[] = [];
   let inContent = false;
+  let sawHunk = false;
 
   for (const line of lines) {
     if (line.startsWith('@@')) {
       inContent = true;
+      sawHunk = true;
       continue;
     }
     if (inContent && line.startsWith('+')) {
       contentLines.push(line.slice(1));
     }
+  }
+
+  if (!sawHunk) {
+    throw new Error('Invalid create_file diff: missing hunk header');
   }
 
   return contentLines.join('\n');
@@ -320,10 +339,17 @@ function extractContentFromDiff(diff: string): string {
  * Handles context lines (space-prefixed), additions (+), and removals (-).
  */
 function applyUnifiedDiff(original: string, diff: string): string {
+  if (diff.trim().length === 0) {
+    throw new Error('Invalid diff: empty diff');
+  }
+
   const originalLines = original.split('\n');
   const diffLines = diff.split('\n');
   const result: string[] = [];
   let originalIdx = 0;
+  let inHunk = false;
+  let sawHunk = false;
+  let sawOperation = false;
 
   for (let i = 0; i < diffLines.length; i++) {
     const line = diffLines[i];
@@ -331,6 +357,8 @@ function applyUnifiedDiff(original: string, diff: string): string {
     // Parse hunk header: @@ -start,count +start,count @@
     const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/);
     if (hunkMatch) {
+      sawHunk = true;
+      inHunk = true;
       const hunkStart = parseInt(hunkMatch[1], 10) - 1; // 0-indexed
       if (hunkStart < originalIdx) {
         throw new Error(
@@ -350,8 +378,16 @@ function applyUnifiedDiff(original: string, diff: string): string {
     if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('diff ')) {
       continue;
     }
+    if (line.startsWith('\\')) {
+      continue; // e.g. "\ No newline at end of file"
+    }
+
+    if (!inHunk && (line.startsWith('-') || line.startsWith('+') || line.startsWith(' '))) {
+      throw new Error(`Invalid diff: operation outside hunk at line ${i + 1}`);
+    }
 
     if (line.startsWith('-')) {
+      sawOperation = true;
       // Remove line — verify it matches before skipping
       const expected = line.slice(1);
       const actual = originalLines[originalIdx];
@@ -363,9 +399,11 @@ function applyUnifiedDiff(original: string, diff: string): string {
       }
       originalIdx++;
     } else if (line.startsWith('+')) {
+      sawOperation = true;
       // Add line
       result.push(line.slice(1));
     } else if (line.startsWith(' ')) {
+      sawOperation = true;
       // Context line — verify match, then copy from original
       const expected = line.slice(1);
       const actual = originalLines[originalIdx];
@@ -377,7 +415,16 @@ function applyUnifiedDiff(original: string, diff: string): string {
       }
       result.push(actual);
       originalIdx++;
+    } else if (line.length > 0) {
+      throw new Error(`Invalid diff line at ${i + 1}: ${line}`);
     }
+  }
+
+  if (!sawHunk) {
+    throw new Error('Invalid diff: no hunks found');
+  }
+  if (!sawOperation) {
+    throw new Error('Invalid diff: no operations in hunks');
   }
 
   // Copy remaining original lines after last hunk
@@ -470,6 +517,7 @@ function createWriteTool(cwd: string) {
     execute: async ({ path: filePath, content }) => {
       try {
         const target = validatePath(cwd, filePath, true);
+        assertNotSensitivePath(target, filePath);
         await fs.promises.mkdir(path.dirname(target), { recursive: true });
         await fs.promises.writeFile(target, content, 'utf8');
         return `Wrote ${filePath}`;
@@ -489,16 +537,19 @@ function createEditTool(cwd: string) {
       path: z.string().describe('File path relative to project root'),
       old_text: z.string().describe('Text to replace'),
       new_text: z.string().describe('Replacement text'),
-      replace_all: z.boolean().nullable().describe('Replace all matches (default false)'),
+      replace_all: z.boolean().nullable().optional().describe('Replace all matches (default false)'),
     }),
     execute: async ({ path: filePath, old_text, new_text, replace_all }) => {
       try {
         const target = validatePath(cwd, filePath);
+        assertNotSensitivePath(target, filePath);
         const content = await fs.promises.readFile(target, 'utf8');
         if (!content.includes(old_text)) {
           return `[error] edit failed: text not found in ${filePath}`;
         }
-        const updated = replace_all ? content.split(old_text).join(new_text) : content.replace(old_text, new_text);
+        const updated = replace_all
+          ? content.split(old_text).join(new_text)
+          : content.replace(old_text, () => new_text);
         await fs.promises.writeFile(target, updated, 'utf8');
         return `Edited ${filePath}`;
       } catch (err) {
@@ -533,8 +584,16 @@ function createShellFunctionTool(cwd: string, name: 'shell' | 'exec') {
         }
 
         const timeout = input.timeout_ms ?? TOOL_TIMEOUT_MS;
+        const clampedTimeout = Math.min(
+          MAX_SHELL_TIMEOUT_MS,
+          Math.max(1_000, timeout),
+        );
         const maxOutput = input.max_output_bytes ?? MAX_OUTPUT_BYTES;
-        const results = await shell.run(commands, timeout, maxOutput);
+        const clampedMaxOutput = Math.min(
+          MAX_SHELL_OUTPUT_BYTES,
+          Math.max(1_024, maxOutput),
+        );
+        const results = await shell.run(commands, clampedTimeout, clampedMaxOutput);
 
         return results
           .map((result, idx) => {

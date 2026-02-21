@@ -264,21 +264,25 @@ export async function getAuthenticatedClient(): Promise<OpenAI | undefined> {
       originator: 'pi',
     },
     fetch: async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-      // Codex backend rejects store: true — force it to false.
-      // Keep request shape compatible with Codex responses transport.
-      if (init?.body && typeof init.body === 'string') {
+      const parsedUrl = (() => {
+        try {
+          if (url instanceof Request) return new URL(url.url);
+          if (url instanceof URL) return url;
+          return new URL(url, CODEX_BASE_URL);
+        } catch {
+          return undefined;
+        }
+      })();
+
+      const pathname = parsedUrl?.pathname ?? '';
+      const isResponsesLikeEndpoint =
+        pathname.includes('/responses') || pathname.includes('/completions');
+
+      // Codex backend rejects store: true on responses/completions payloads.
+      if (isResponsesLikeEndpoint && init?.body && typeof init.body === 'string') {
         try {
           const body = JSON.parse(init.body) as Record<string, unknown>;
           body.store = false;
-          if (body.stream === undefined) {
-            body.stream = true;
-          }
-          if (body.parallel_tool_calls === undefined) {
-            body.parallel_tool_calls = true;
-          }
-          if (body.tool_choice === undefined) {
-            body.tool_choice = 'auto';
-          }
           init = { ...init, body: JSON.stringify(body) };
         } catch {
           // not JSON, pass through
