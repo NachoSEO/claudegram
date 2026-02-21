@@ -276,7 +276,7 @@ export async function getAuthenticatedClient(): Promise<OpenAI | undefined> {
 
       const pathname = parsedUrl?.pathname ?? '';
       const isResponsesLikeEndpoint =
-        pathname.includes('/responses') || pathname.includes('/completions');
+        pathname.endsWith('/responses') || pathname.endsWith('/completions');
 
       // Codex backend rejects store: true on responses/completions payloads.
       if (isResponsesLikeEndpoint && init?.body && typeof init.body === 'string') {

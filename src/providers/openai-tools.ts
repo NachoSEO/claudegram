@@ -415,7 +415,7 @@ function applyUnifiedDiff(original: string, diff: string): string {
       }
       result.push(actual);
       originalIdx++;
-    } else if (line.length > 0) {
+    } else if (line.length > 0 && inHunk) {
       throw new Error(`Invalid diff line at ${i + 1}: ${line}`);
     }
   }
