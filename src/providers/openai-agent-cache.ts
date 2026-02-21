@@ -10,6 +10,7 @@
  */
 
 import { Agent } from '@openai/agents';
+import type { MCPServer } from '@openai/agents';
 
 import { config } from '../config.js';
 import { getSystemPrompt } from './system-prompt.js';
@@ -44,6 +45,7 @@ export class AgentCache {
     cwd: string,
     platform: Platform = 'telegram',
     dangerousMode: boolean = config.DANGEROUS_MODE,
+    mcpServers: MCPServer[] = [],
   ): ChatAgentState {
     const existing = this.cache.get(chatId);
 
@@ -51,13 +53,14 @@ export class AgentCache {
       return existing;
     }
 
-    // Create fresh Agent with fsuite tools scoped to cwd
+    // Create fresh Agent with fsuite tools scoped to cwd + MCP servers
     const tools = createFsuiteTools(cwd, dangerousMode);
     const agent = new Agent({
       name: 'claudegram-openai',
       instructions: getSystemPrompt(platform),
       model,
       tools,
+      mcpServers,
     });
 
     const state: ChatAgentState = {

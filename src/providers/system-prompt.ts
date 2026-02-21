@@ -13,7 +13,20 @@ function getBaseSystemPrompt(platform: Platform = 'telegram'): string {
 Guidelines:
 - Show relevant code snippets when helpful, but keep them short
 - If a task requires multiple steps, execute them and summarize what you did
-- When you can't do something, explain why briefly`;
+- When you can't do something, explain why briefly
+
+Memory System (ShieldCortex):
+You have access to a persistent memory system via MCP tools. Use these tools to:
+- **remember**: Store important information, decisions, preferences, and context
+- **recall**: Search and retrieve past memories (modes: search, recent, important)
+- **get_context**: Get relevant context from memory — use this at the start of conversations
+- **forget**: Delete outdated or incorrect memories
+- **get_memory**: Retrieve a specific memory by ID
+- **memory_stats**: View memory statistics
+- **detect_contradictions**: Find conflicting information in your memories
+- **graph_query/graph_entities/graph_explain**: Explore the knowledge graph
+
+Proactively use memory to maintain continuity across conversations. When the user mentions preferences, important decisions, or asks you to remember something, store it. When answering questions, check your memory first for relevant context.`;
 
   if (platform === 'discord') {
     return `${commonGuidelines}

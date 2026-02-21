@@ -19,6 +19,7 @@ import { stripReasoningSummary } from './system-prompt.js';
 import { AgentCache } from './openai-agent-cache.js';
 import type { HistoryItem } from './openai-agent-cache.js';
 import { hasOAuthTokens, getAuthenticatedClient } from './openai-auth.js';
+import { mcpManager } from './openai-mcp.js';
 
 import type {
   AgentProvider,
@@ -162,6 +163,9 @@ export class OpenAIProvider implements AgentProvider {
     const contextWindow = getContextWindow(effectiveModel);
     const dangerousToolsEnabled = config.DANGEROUS_MODE && this.authMode !== 'oauth';
 
+    // Get connected MCP servers (ShieldCortex memory)
+    const mcpServers = await mcpManager.getServers();
+
     // Get or create a cached Agent instance (invalidates on model/cwd change)
     const agentState = this.agentCache.getOrCreate(
       chatId,
@@ -169,6 +173,7 @@ export class OpenAIProvider implements AgentProvider {
       session.workingDirectory,
       platform,
       dangerousToolsEnabled,
+      mcpServers,
     );
 
     const agentStartTime = Date.now();
