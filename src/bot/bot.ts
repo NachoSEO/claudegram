@@ -24,6 +24,7 @@ import {
   handleContext,
   handlePing,
   handleCancel,
+  handlePeek,
   handleCommands,
   handleModelCommand,
   handleModelCallback,
@@ -92,6 +93,7 @@ export async function createBot(): Promise<Bot> {
     { command: 'status', description: '📊 Show current session status' },
     { command: 'clear', description: '🗑️ Clear conversation history' },
     { command: 'cancel', description: '⏹️ Cancel current request' },
+    { command: 'peek', description: '👁 Peek at what Claude is doing right now' },
     { command: 'softreset', description: '🔄 Soft reset (cancel + clear session)' },
     { command: 'resume', description: '▶️ Resume a session' },
     { command: 'botstatus', description: '🩺 Show bot process status' },
@@ -125,11 +127,12 @@ export async function createBot(): Promise<Bot> {
   // Apply auth middleware to all updates
   bot.use(authMiddleware);
 
-  // /cancel, /reset, and /ping fire BEFORE sequentialize so they bypass per-chat ordering.
-  // This lets them interrupt a running query without waiting for it to finish.
+  // /cancel, /reset, /ping, and /peek fire BEFORE sequentialize so they bypass per-chat ordering.
+  // This lets them interrupt or inspect a running query without waiting for it to finish.
   bot.command('cancel', handleCancel);
   bot.command('softreset', handleReset);
   bot.command('ping', handlePing);
+  bot.command('peek', handlePeek);
 
   // Sequentialize: same-chat updates are processed in order.
   // This runs AFTER /cancel so cancel bypasses it.

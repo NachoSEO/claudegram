@@ -20,7 +20,9 @@ import {
   isProcessing,
   queueRequest,
   setAbortController,
+  getQueuePosition,
 } from '../../claude/request-queue.js';
+import { getActivity } from '../../claude/activity-tracker.js';
 import { createTelegraphFromFile, createTelegraphPage } from '../../telegram/telegraph.js';
 import { isMediumUrl, fetchMediumArticle, FreediumArticle } from '../../medium/freedium.js';
 import { escapeMarkdownV2 as esc } from '../../telegram/markdown.js';
@@ -1062,6 +1064,76 @@ export async function handleTelegraphCallback(ctx: Context): Promise<void> {
 export async function handlePing(ctx: Context): Promise<void> {
   const uptime = getUptimeFormatted();
   await replyMd(ctx, `🏓 Pong\\!\n\nUptime: ${esc(uptime)}`);
+}
+
+export async function handlePeek(ctx: Context): Promise<void> {
+  const keyInfo = getSessionKeyFromCtx(ctx);
+  if (!keyInfo) return;
+  const { sessionKey } = keyInfo;
+
+  const activity = getActivity(sessionKey);
+  const queueSize = getQueuePosition(sessionKey);
+
+  if (!activity) {
+    let msg = '👁 *Peek*\n\n💤 Idle — no active query\\.';
+    if (queueSize > 0) {
+      msg += `\n\n📋 *Queue:* ${queueSize} message${queueSize > 1 ? 's' : ''} waiting`;
+    }
+    await replyMd(ctx, msg);
+    return;
+  }
+
+  const now = Date.now();
+  const elapsed = now - activity.startTime;
+  const sinceLast = now - activity.lastEventTime;
+
+  let msg = `👁 *Peek*\n\n⚡ *Active* — running for ${esc(formatPeekDuration(elapsed))}`;
+
+  if (activity.currentTool) {
+    const detail = activity.currentTool.detail
+      ? ` → ${activity.currentTool.detail}`
+      : '';
+    msg += `\n🔧 *Current:* \`${esc(activity.currentTool.name)}\`${detail ? ` ${esc(detail)}` : ''}`;
+  }
+
+  if (activity.toolCount > 0) {
+    // Build tool frequency summary
+    const freq: Record<string, number> = {};
+    for (const t of activity.toolsUsed) {
+      freq[t] = (freq[t] || 0) + 1;
+    }
+    const summary = Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => `${name} ×${count}`)
+      .join(', ');
+    msg += `\n📊 ${activity.toolCount} tool call${activity.toolCount > 1 ? 's' : ''} \\(${esc(summary)}\\)`;
+  }
+
+  if (activity.lastTextSnippet) {
+    const snippet = activity.lastTextSnippet.replace(/\n/g, ' ').trim();
+    if (snippet) {
+      msg += `\n💬 _"${esc(snippet.length > 80 ? '...' + snippet.slice(-77) : snippet)}"_`;
+    }
+  }
+
+  msg += `\n⏱ Last activity: ${esc(formatPeekDuration(sinceLast))} ago`;
+
+  if (queueSize > 0) {
+    msg += `\n\n📋 *Queue:* ${queueSize} message${queueSize > 1 ? 's' : ''} waiting`;
+  }
+
+  await replyMd(ctx, msg);
+}
+
+function formatPeekDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${secs}s`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${hours}h ${mins}m`;
 }
 
 export async function handleContext(ctx: Context): Promise<void> {

@@ -19,6 +19,14 @@ import { config } from '../config.js';
 import { AgentWatchdog } from './agent-watchdog.js';
 import { createClaudegramMcpServer } from './mcp-tools.js';
 import {
+  startActivity,
+  recordToolStart,
+  recordToolEnd,
+  recordTextProgress,
+  recordEvent,
+  clearActivity,
+} from './activity-tracker.js';
+import {
   createAgentTimer,
   recordMessage,
   formatDuration,
@@ -347,11 +355,11 @@ export async function sendToAgent(
 
     const toolsOption = config.DANGEROUS_MODE
       ? { type: 'preset' as const, preset: 'claude_code' as const }
-      : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'];
+      : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task', 'WebSearch', 'WebFetch'];
 
     const allowedToolsOption = config.DANGEROUS_MODE
       ? undefined
-      : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task'];
+      : ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Task', 'WebSearch', 'WebFetch'];
 
     // PreCompact hook always registered (logging only — notification sent from compact_boundary message)
     const preCompactHook: Partial<Record<HookEvent, HookCallbackMatcher[]>> = {
@@ -495,11 +503,15 @@ export async function sendToAgent(
       : null;
     watchdog?.start();
 
+    // Start activity tracking for /peek
+    startActivity(sessionKey);
+
     // Process response messages
     for await (const responseMessage of response) {
-      // Record activity for watchdog
+      // Record activity for watchdog and /peek
       recordMessage(timer);
       watchdog?.recordActivity(responseMessage.type);
+      recordEvent(sessionKey);
 
       // Check for abort
       if (controller.signal.aborted) {
@@ -517,6 +529,7 @@ export async function sendToAgent(
           if (block.type === 'text') {
             fullText += block.text;
             onProgress?.(fullText);
+            recordTextProgress(sessionKey, fullText);
           } else if (block.type === 'tool_use') {
             const toolInput = 'input' in block ? block.input as Record<string, unknown> : {};
             const inputSummary = toolInput.command
@@ -534,8 +547,9 @@ export async function sendToAgent(
               const subagentType = toolInput.subagent_type || 'unknown';
               logAt('basic', `[Claude] SUBAGENT START: ${subagentType} — ${String(taskDesc).substring(0, 100)}`);
             }
-            // Notify tool start for terminal UI
+            // Notify tool start for terminal UI and /peek
             onToolStart?.(block.name, toolInput);
+            recordToolStart(sessionKey, block.name, inputSummary || undefined);
           }
         }
       } else if (responseMessage.type === 'system') {
@@ -565,8 +579,9 @@ export async function sendToAgent(
         logAt('verbose', `[Claude] Tool progress: ${responseMessage.tool_name}`, responseMessage);
       } else if (responseMessage.type === 'tool_use_summary') {
         logAt('verbose', '[Claude] Tool use summary', responseMessage);
-        // Notify tool end for terminal UI (summary doesn't include tool name)
+        // Notify tool end for terminal UI and /peek (summary doesn't include tool name)
         onToolEnd?.();
+        recordToolEnd(sessionKey);
       } else if (responseMessage.type === 'auth_status') {
         logAt('basic', '[Claude] Auth status', responseMessage);
       } else if (responseMessage.type === 'stream_event') {
@@ -652,6 +667,7 @@ export async function sendToAgent(
   } finally {
     watchdog?.stop();
     clearActiveQuery(sessionKey);
+    clearActivity(sessionKey);
   }
 
   // Add assistant response to history
