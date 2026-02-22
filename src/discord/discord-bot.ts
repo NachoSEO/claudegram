@@ -40,6 +40,14 @@ export function createDiscordBot(): Client {
   client.once(Events.ClientReady, (readyClient) => {
     console.log(`Discord bot ready as @${readyClient.user.tag}`);
     readyClient.user.setActivity('Ready', { type: ActivityType.Custom });
+
+    try {
+      const { attachJobNotifier } = require("./jobs/job-notifier.js");
+      attachJobNotifier(readyClient);
+      console.log("[Jobs] Job notifier attached");
+    } catch (e) {
+      console.error("[Jobs] Failed to attach job notifier", e);
+    }
   });
 
   // Slash command handling

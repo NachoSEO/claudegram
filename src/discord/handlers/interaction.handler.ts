@@ -46,13 +46,19 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
       console.error('[Discord] Modal handler error:', error);
     }
   }
-  // Button interactions (used by /creview and image actions)
+  // Button interactions (used by jobs, /creview and image actions)
   if (interaction.isButton()) {
     const authorized = await checkInteractionAuth(interaction);
     if (!authorized) return;
     try {
       const handledApproval = await approvalManager.handleButton(interaction);
       if (handledApproval) return;
+      // Generic job buttons
+      if (String(interaction.customId).startsWith('job:')) {
+        const { handleJobButton } = require('../jobs/job-notifier.js');
+        await handleJobButton(interaction);
+        return;
+      }
 
       // Image buttons live in message.handler.ts
       if (String(interaction.customId).startsWith('img:')) {

@@ -20,3 +20,5 @@ MEDIUM_*.md
 scripts/medium_fetch.py
 scripts/medium_login.py
 videos/agentTelly_original.mp4
+# runtime job logs
+.claudegram/jobs/
