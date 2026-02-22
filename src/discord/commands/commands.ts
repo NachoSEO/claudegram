@@ -10,6 +10,7 @@ const COMMAND_LIST = [
   { name: '/model', description: 'Select the Claude model' },
   { name: '/reddit', description: 'Fetch Reddit posts, subreddits, or user profiles' },
   { name: '/vreddit', description: 'Download a Reddit video' },
+  { name: '/creview', description: 'Run local CodeRabbit review (prompt-only)' },
   { name: '/commands', description: 'Show this list' },
   { name: 'Ask Claude', description: 'Right-click a message to analyze it (context menu)' },
 ];

@@ -96,6 +96,24 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName('creview')
+    .setDescription('Run CodeRabbit review locally (prompt-only) and return results')
+    .addStringOption(option =>
+      option.setName('base')
+        .setDescription('Base ref to diff against (default: origin/main)')
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option.setName('target')
+        .setDescription('What to review (default: committed)')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Committed', value: 'committed' },
+          { name: 'Uncommitted', value: 'uncommitted' },
+        )
+    ),
+
+  new SlashCommandBuilder()
     .setName('continue')
     .setDescription('Resume the most recent session'),
 

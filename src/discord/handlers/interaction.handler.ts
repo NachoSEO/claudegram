@@ -23,6 +23,7 @@ import { handleVoice } from '../commands/voice.js';
 import { handleDroid } from '../commands/droid.js';
 import { handleExtract } from '../commands/extract.js';
 import { handleTeleport } from '../commands/teleport.js';
+import { creviewCommand, creviewButton } from '../commands/creview.js';
 import { sanitizeError } from '../../utils/sanitize.js';
 
 /**
@@ -31,6 +32,18 @@ import { sanitizeError } from '../../utils/sanitize.js';
  * @param interaction - The incoming Discord interaction to authorize and dispatch; supports message context menu and chat input commands.
  */
 export async function handleInteraction(interaction: Interaction): Promise<void> {
+  // Button interactions (used by /creview)
+  if (interaction.isButton()) {
+    const authorized = await checkInteractionAuth(interaction);
+    if (!authorized) return;
+    try {
+      await creviewButton(interaction);
+    } catch (error) {
+      console.error('[Discord] Button handler error:', error);
+    }
+    return;
+  }
+
   // Context menu commands
   if (interaction.isMessageContextMenuCommand()) {
     const authorized = await checkInteractionAuth(interaction);
@@ -104,6 +117,9 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         break;
       case 'extract':
         await handleExtract(command);
+        break;
+      case 'creview':
+        await creviewCommand(command);
         break;
       case 'teleport':
         await handleTeleport(command);
