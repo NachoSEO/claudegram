@@ -88,6 +88,7 @@ interface ToolCallbackRef {
   chatId: number;
 }
 
+
 export class OpenAIProvider implements AgentProvider {
   private readonly agentCache = new AgentCache();
   private readonly chatModels = new Map<number, string>();
@@ -139,12 +140,13 @@ export class OpenAIProvider implements AgentProvider {
 
   async send(
     chatId: number,
-    message: string,
+    message: string | AgentInputItem[],
     options: AgentOptions,
   ): Promise<AgentResponse> {
     const { onProgress, onToolStart, onToolEnd, abortController, command, model, platform } = options;
 
-    console.log(`[OpenAI] send() chatId=${chatId} prompt="${message.slice(0, 120)}..." command=${command || 'chat'}`);
+    const promptForLog = Array.isArray(message) ? '[complex-input]' : message;
+    console.log(`[OpenAI] send() chatId=${chatId} prompt="${promptForLog.slice(0, 120)}..." command=${command || 'chat'}`);
 
     // Ensure OAuth client is initialized (no-op for API key auth)
     await this.ensureOAuthClient();
@@ -154,10 +156,10 @@ export class OpenAIProvider implements AgentProvider {
       throw new Error('No active session. Use /project to set working directory.');
     }
 
-    sessionManager.updateActivity(chatId, message);
+    sessionManager.updateActivity(chatId, promptForLog);
 
-    let prompt = message;
-    if (command === 'explore') {
+    let prompt = promptForLog;
+    if (command === 'explore' && !Array.isArray(message)) {
       prompt = `Explore the codebase and answer: ${message}`;
     }
 
@@ -210,7 +212,9 @@ export class OpenAIProvider implements AgentProvider {
       this.ensureToolHooks(agentState.agent);
 
       // Build input: accumulated history + new user message
-      const input = this.buildInput(agentState.history, prompt);
+      const input = Array.isArray(message)
+        ? this.buildInputWithItems(agentState.history, message)
+        : this.buildInput(agentState.history, prompt);
 
       // Run with streaming — no session, local history only
       console.log(`[OpenAI] Starting run() with ${input.length} input items`);
@@ -274,7 +278,9 @@ export class OpenAIProvider implements AgentProvider {
       }
 
       // Update local conversation history
-      agentState.history.push({ role: 'user', content: prompt });
+      if (!Array.isArray(message)) {
+        agentState.history.push({ role: 'user', content: prompt });
+      }
       if (fullText) {
         agentState.history.push({ role: 'assistant', content: fullText });
       }
@@ -380,6 +386,15 @@ export class OpenAIProvider implements AgentProvider {
     items.push(user(newMessage));
     return items;
   }
+
+  private buildInputWithItems(history: HistoryItem[], newItems: AgentInputItem[]): AgentInputItem[] {
+    const items: AgentInputItem[] = history.map((item) =>
+      item.role === 'user' ? user(item.content) : assistant(item.content),
+    );
+    items.push(...newItems);
+    return items;
+  }
+
 
   /**
    * Trim conversation history to stay within context limits.

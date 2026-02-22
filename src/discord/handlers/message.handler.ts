@@ -25,6 +25,7 @@ import { maybeSendDiscordVoiceReply } from '../voice-reply.js';
 import { sendCompactionNotice, sendSessionInitNotice } from '../compaction-notice.js';
 import { transcribeFile } from '../../audio/transcribe.js';
 import * as os from 'os';
+import { fileToBase64 } from '../../utils/base64.js';
 
 const UPLOADS_DIR = '.claudegram/uploads';
 
