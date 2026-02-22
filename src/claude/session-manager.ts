@@ -33,12 +33,41 @@ interface Session {
   claudeSessionId?: string;
   openaiConversationId?: string;
   workingDirectory: string;
+  /** Ephemeral index of recently uploaded image artifacts keyed by Discord message id. */
+  images?: Record<string, { path: string; relativePath: string; caption?: string; createdAt: string }>;
   createdAt: Date;
   lastActivity: Date;
 }
 
 class SessionManager {
   private sessions: Map<number, Session> = new Map();
+
+  setImageArtifact(chatId: number, messageId: string, artifact: { path: string; relativePath: string; caption?: string }): void {
+    const session = this.sessions.get(chatId);
+    if (!session) return;
+    if (!session.images) session.images = {};
+
+    const keys = Object.keys(session.images);
+    if (keys.length > 50) {
+      keys
+        .map((k) => ({ k, t: Date.parse(session.images?.[k]?.createdAt || '0') || 0 }))
+        .sort((a, b) => a.t - b.t)
+        .slice(0, Math.max(0, keys.length - 50))
+        .forEach(({ k }) => { delete session.images?.[k]; });
+    }
+
+    session.images[messageId] = {
+      path: artifact.path,
+      relativePath: artifact.relativePath,
+      caption: artifact.caption,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  getImageArtifact(chatId: number, messageId: string): { path: string; relativePath: string; caption?: string; createdAt: string } | undefined {
+    const session = this.sessions.get(chatId);
+    return session?.images?.[messageId];
+  }
 
   getSession(chatId: number): Session | undefined {
     return this.sessions.get(chatId);

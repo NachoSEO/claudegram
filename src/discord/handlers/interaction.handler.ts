@@ -25,6 +25,7 @@ import { handleExtract } from '../commands/extract.js';
 import { handleTeleport } from '../commands/teleport.js';
 import { creviewCommand, creviewButton } from '../commands/creview.js';
 import { sanitizeError } from '../../utils/sanitize.js';
+import { handleImageButtons } from './message.handler.js';
 
 /**
  * Dispatches a Discord interaction to the matching command handler after authorization and sends sanitized error feedback to the user on failure.
@@ -32,11 +33,17 @@ import { sanitizeError } from '../../utils/sanitize.js';
  * @param interaction - The incoming Discord interaction to authorize and dispatch; supports message context menu and chat input commands.
  */
 export async function handleInteraction(interaction: Interaction): Promise<void> {
-  // Button interactions (used by /creview)
+  // Button interactions (used by /creview and image actions)
   if (interaction.isButton()) {
     const authorized = await checkInteractionAuth(interaction);
     if (!authorized) return;
     try {
+      // Image buttons live in message.handler.ts
+      if (String(interaction.customId).startsWith('img:')) {
+        await handleImageButtons(interaction);
+        return;
+      }
+      // /creview buttons
       await creviewButton(interaction);
     } catch (error) {
       console.error('[Discord] Button handler error:', error);

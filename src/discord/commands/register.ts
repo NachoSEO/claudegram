@@ -104,12 +104,13 @@ const commands = [
         .setRequired(false)
     )
     .addStringOption(option =>
-      option.setName('target')
+      option.setName('type')
         .setDescription('What to review (default: committed)')
         .setRequired(false)
         .addChoices(
           { name: 'Committed', value: 'committed' },
           { name: 'Uncommitted', value: 'uncommitted' },
+          { name: 'All', value: 'all' },
         )
     ),
 

@@ -2,12 +2,17 @@ import {
   Message,
   Attachment,
   ChannelType,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  type ButtonInteraction,
 } from 'discord.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { discordChatId } from '../id-mapper.js';
 import { isAuthorizedMessage } from '../middleware/auth.js';
 import { discordMessageSender } from '../message-sender.js';
+import { splitDiscordMessage } from '../markdown.js';
 import { sendToAgent } from '../../claude/agent.js';
 import { sessionManager } from '../../claude/session-manager.js';
 import {
@@ -30,6 +35,60 @@ import type { AgentInputItem } from '@openai/agents';
 import { fileToBase64 } from '../../utils/base64.js';
 
 const UPLOADS_DIR = '.claudegram/uploads';
+
+function buildImageButtons(opts: { messageId: string; inThread: boolean }) {
+  const { messageId, inThread } = opts;
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('img:ocr:' + messageId)
+      .setLabel('OCR text')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('img:chat:' + messageId)
+      .setLabel('Chat about image')
+      .setStyle(ButtonStyle.Success),
+  );
+
+  if (!inThread) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId('img:ocr_thread:' + messageId)
+        .setLabel('OCR + start thread')
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+
+  return row;
+}
+
+function buildImageReadPrompt(params: { relativePath: string; caption: string }) {
+  const { relativePath, caption } = params;
+  const lines = [
+    'User uploaded an image to the project.',
+    'Relative path: ' + relativePath,
+    caption ? 'Caption: "' + caption + '"' : 'Caption: (none)',
+    '',
+    'Task:',
+    '- First: briefly describe what is in the image (high-signal, 5-10 bullets max).',
+    '- Do NOT perform OCR by default.',
+    '- End by offering OCR and follow-up questions.',
+  ];
+  return lines.join('\n');
+}
+
+function buildOcrPrompt(params: { relativePath: string }) {
+  const { relativePath } = params;
+  return [
+    'OCR request for a user-uploaded image.',
+    'Relative path: ' + relativePath,
+    '',
+    'Task:',
+    '- Extract ALL visible text from the image.',
+    '- Output in a structured format: Title (if any), Sections, Bullet points.',
+    '- Preserve the original wording as closely as possible.',
+    '- If no text is present, say: "No readable text detected."',
+  ].join('\n');
+}
 
 interface ReplyContext {
   /** Full prompt context to send to the agent. */
@@ -170,15 +229,14 @@ async function handleImageAttachment(
       captionText = captionText.replace(new RegExp(`<@!?${message.client.user.id}>`, 'g'), '').trim();
     }
 
-    const noteLines = [
-      'User uploaded an image to the project.',
-      `Saved at: ${finalPath}`,
-      `Relative path: ${relativePath}`,
-      captionText ? `Caption: "${captionText}"` : 'Caption: (none)',
-      'If the caption includes a question or request, answer it. Otherwise, acknowledge briefly and ask if they want any analysis or edits.',
-      'You can inspect the image with tools if needed (e.g. Read tool for image files).',
-    ];
-    const agentPrompt = noteLines.join('\n');
+    // Index this image for button interactions (ephemeral in-memory).
+    sessionManager.setImageArtifact(chatId, message.id, {
+      path: finalPath,
+      relativePath,
+      caption: captionText || undefined,
+    });
+
+    const agentPrompt = buildImageReadPrompt({ relativePath, caption: captionText || '' });
 
     const imageBase64 = fileToBase64(finalPath);
     const mediaType = (actualType?.mimeType || (ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'application/octet-stream'));
@@ -228,6 +286,11 @@ async function handleImageAttachment(
 
         await discordMessageSender.finishStreaming(channelId, response.text);
         await maybeSendDiscordVoiceReply(message, response.text);
+
+        const row = buildImageButtons({ messageId: message.id, inThread: isThread });
+        try {
+          await message.reply({ content: 'Image actions:', components: [row] });
+        } catch { /* ignore */ }
         if ('send' in message.channel) {
           await sendCompactionNotice(message.channel, response.compaction);
           await sendSessionInitNotice(message.channel, response.sessionInit, previousSessionId);
@@ -409,4 +472,98 @@ export async function handleMessage(message: Message): Promise<void> {
     console.error('[Discord] Message error:', error);
     await message.reply(`Error: ${sanitizeError(error)}`).catch(() => {});
   }
+}
+/**
+ * Handle image action buttons (OCR / chat / OCR+thread).
+ */
+export async function handleImageButtons(interaction: ButtonInteraction): Promise<void> {
+  const customId = String(interaction.customId);
+  if (!customId.startsWith('img:')) return;
+
+  const parts = customId.split(':');
+  const action = parts[1];
+  const messageId = parts[2];
+  if (!action || !messageId) {
+    await interaction.reply({ content: 'Invalid image action.', ephemeral: true });
+    return;
+  }
+
+  const chatId = discordChatId(interaction.user.id);
+  const session = sessionManager.getSession(chatId);
+  if (!session) {
+    await interaction.reply({ content: 'No project set. Use `/project <path>` first.', ephemeral: true });
+    return;
+  }
+
+  const artifact = sessionManager.getImageArtifact(chatId, messageId);
+  if (!artifact) {
+    await interaction.reply({ content: 'Image not found in session. Please re-upload the image.', ephemeral: true });
+    return;
+  }
+
+  const imageBase64 = fileToBase64(artifact.path);
+  const ext = path.extname(artifact.path).toLowerCase();
+  const mediaType = ext === '.png' ? 'image/png' : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' : 'application/octet-stream';
+  const dataUrl = 'data:' + mediaType + ';base64,' + imageBase64;
+
+  if (action === "chat") {
+    await interaction.reply({ content: 'Chatting about image…', ephemeral: true });
+    const prompt = buildImageReadPrompt({ relativePath: artifact.relativePath, caption: artifact.caption || "" });
+    const agentItems: AgentInputItem[] = [
+      userItem([
+        { type: 'input_text', text: prompt },
+        { type: 'input_image', image: dataUrl },
+      ]),
+    ];
+    const response = await sendToAgent(chatId, agentItems as any, { platform: "discord" });
+    const chunks = splitDiscordMessage(response.text, 1900);
+    await interaction.followUp({ content: chunks[0], ephemeral: true });
+    for (const c of chunks.slice(1)) await interaction.followUp({ content: c, ephemeral: true });
+    return;
+  }
+
+  if (action === "ocr" || action === "ocr_thread") {
+    const prompt = buildOcrPrompt({ relativePath: artifact.relativePath });
+    const agentItems: AgentInputItem[] = [
+      userItem([
+        { type: 'input_text', text: prompt },
+        { type: 'input_image', image: dataUrl },
+      ]),
+    ];
+
+    if (action === "ocr") {
+      await interaction.reply({ content: 'Running OCR…', ephemeral: true });
+      const response = await sendToAgent(chatId, agentItems as any, { platform: "discord" });
+      const chunks = splitDiscordMessage(response.text, 1900);
+      await interaction.followUp({ content: chunks[0], ephemeral: true });
+      for (const c of chunks.slice(1)) await interaction.followUp({ content: c, ephemeral: true });
+      return;
+    }
+
+    const channel = interaction.channel;
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      await interaction.reply({ content: 'Cannot start a thread in this channel type.', ephemeral: true });
+      return;
+    }
+
+    await interaction.reply({ content: 'Creating thread + running OCR…', ephemeral: true });
+
+    const threadName = '🧾 OCR';
+    try {
+      const parent: any = channel;
+      const thread = await parent.threads.create({ name: threadName, autoArchiveDuration: 1440 });
+      const thinking = await thread.send('Running OCR…');
+      const response = await sendToAgent(chatId, agentItems as any, { platform: "discord" });
+      await thinking.edit('OCR complete.');
+      const chunks = splitDiscordMessage(response.text, 1900);
+      await thread.send(chunks[0]);
+      for (const c of chunks.slice(1)) await thread.send(c);
+      await interaction.followUp({ content: "Thread created: " + thread.toString(), ephemeral: true });
+    } catch (err) {
+      await interaction.followUp({ content: 'Failed to create thread: ' + sanitizeError(err), ephemeral: true });
+    }
+    return;
+  }
+
+  await interaction.reply({ content: 'Unknown image action.', ephemeral: true });
 }
