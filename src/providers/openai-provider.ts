@@ -216,6 +216,9 @@ export class OpenAIProvider implements AgentProvider {
       const result = await run(agentState.agent, input, {
         stream: true,
         signal: controller.signal,
+        // Avoid "Max turns (10) exceeded" from @openai/agents runner.
+        // Set very high; can be overridden via env.
+        maxTurns: Number.parseInt(process.env.CLAUDEGRAM_MAX_TURNS || '0', 10) || 1000000,
       } as Parameters<typeof run>[2]);
 
       // The stream: true overload returns StreamedRunResult
