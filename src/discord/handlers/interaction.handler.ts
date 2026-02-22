@@ -24,8 +24,10 @@ import { handleDroid } from '../commands/droid.js';
 import { handleExtract } from '../commands/extract.js';
 import { handleTeleport } from '../commands/teleport.js';
 import { creviewCommand, creviewButton } from '../commands/creview.js';
+import { devopsCommand, devopsButton } from '../commands/devops.js';
 import { sanitizeError } from '../../utils/sanitize.js';
 import { handleImageButtons } from './message.handler.js';
+import { approvalManager } from '../approvals/index.js';
 
 /**
  * Dispatches a Discord interaction to the matching command handler after authorization and sends sanitized error feedback to the user on failure.
@@ -33,14 +35,33 @@ import { handleImageButtons } from './message.handler.js';
  * @param interaction - The incoming Discord interaction to authorize and dispatch; supports message context menu and chat input commands.
  */
 export async function handleInteraction(interaction: Interaction): Promise<void> {
+  // Approval modals
+  if (interaction.isModalSubmit()) {
+    const authorized = await checkInteractionAuth(interaction);
+    if (!authorized) return;
+    try {
+      const handled = await approvalManager.handleModal(interaction);
+      if (handled) return;
+    } catch (error) {
+      console.error('[Discord] Modal handler error:', error);
+    }
+  }
   // Button interactions (used by /creview and image actions)
   if (interaction.isButton()) {
     const authorized = await checkInteractionAuth(interaction);
     if (!authorized) return;
     try {
+      const handledApproval = await approvalManager.handleButton(interaction);
+      if (handledApproval) return;
+
       // Image buttons live in message.handler.ts
       if (String(interaction.customId).startsWith('img:')) {
         await handleImageButtons(interaction);
+        return;
+      }
+      // /devops buttons
+      if (String(interaction.customId).startsWith('devops:')) {
+        await devopsButton(interaction);
         return;
       }
       // /creview buttons
@@ -127,6 +148,9 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         break;
       case 'creview':
         await creviewCommand(command);
+        break;
+      case 'devops':
+        await devopsCommand(command);
         break;
       case 'teleport':
         await handleTeleport(command);

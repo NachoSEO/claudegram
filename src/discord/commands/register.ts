@@ -227,6 +227,24 @@ const commands = [
         .setRequired(false)
     ),
 
+
+  new SlashCommandBuilder()
+    .setName('devops')
+    .setDescription('Run background DevOps jobs (build, typecheck, etc.)')
+    .addSubcommand(sub =>
+      sub.setName('run')
+        .setDescription('Run a devops job')
+        .addStringOption(opt =>
+          opt.setName('job')
+            .setDescription('Job to run')
+            .setRequired(true)
+            .addChoices({ name: 'Build + typecheck', value: 'build' })
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName('status')
+        .setDescription('Show last job status')
+    ),
   new ContextMenuCommandBuilder()
     .setName('Ask Claude')
     .setType(ApplicationCommandType.Message),
