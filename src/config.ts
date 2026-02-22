@@ -19,7 +19,7 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   // Agent provider: 'claude' (Claude Agent SDK) or 'openai' (OpenAI Agents SDK)
   AGENT_PROVIDER: z.enum(['claude', 'openai']).default('claude'),
-  OPENAI_DEFAULT_MODEL: z.string().default('gpt-5.2'),
+  OPENAI_DEFAULT_MODEL: z.string().default('gpt-5.3-codex-high'),
   // MCP servers
   MCP_MEMORY_COMMAND: z.string().default(''),
   MCP_MEMORY_ARGS: z.string().default(''),  // JSON array, e.g. '["start"]'

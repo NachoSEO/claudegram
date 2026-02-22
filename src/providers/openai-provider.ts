@@ -40,6 +40,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'gpt-5-mini': 400_000,
   'gpt-5-nano': 400_000,
   'gpt-5.2-codex': 400_000,
+  'gpt-5.3-codex-high': 400_000,
   'gpt-5.3-codex': 400_000,
   'gpt-5.3-codex-spark': 128_000,
   'gpt-4.1': 1_047_576,
@@ -56,7 +57,7 @@ export const OPENAI_MODEL_TIERS = {
   flagship: ['gpt-5.2', 'gpt-5.2-pro'] as const,
   standard: ['gpt-5.1', 'gpt-5'] as const,
   efficient: ['gpt-5-mini', 'gpt-5-nano'] as const,
-  codex: ['gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex', 'gpt-5.1-codex-mini'] as const,
+  codex: ['gpt-5.3-codex-high', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex', 'gpt-5.1-codex-mini'] as const,
   longContext: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano'] as const,
   legacy: ['gpt-4o', 'gpt-4o-mini'] as const,
 } as const;

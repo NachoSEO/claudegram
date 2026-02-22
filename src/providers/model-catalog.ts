@@ -25,6 +25,7 @@ const OPENAI_MODELS: ModelInfo[] = [
   { id: 'gpt-5', label: 'GPT-5', description: 'Standard' },
   { id: 'gpt-5-mini', label: 'GPT-5 Mini', description: 'Fast & cost-efficient' },
   { id: 'gpt-5-nano', label: 'GPT-5 Nano', description: 'Fastest, cheapest' },
+  { id: 'gpt-5.3-codex-high', label: 'GPT-5.3 Codex High', description: 'Best agentic coding (highest quality)' },
   { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', description: 'Best agentic coding model' },
   { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', description: 'Agentic coding' },
   { id: 'gpt-4.1', label: 'GPT-4.1', description: '1M context window' },
