@@ -15,10 +15,11 @@ import type {
   LoopOptions,
   Platform,
   AgentUsage,
+  AgentInputItem,
 } from '../providers/types.js';
 
 // Re-export types so consumers don't need to change imports
-export type { AgentResponse, AgentOptions, LoopOptions, Platform, AgentUsage };
+export type { AgentResponse, AgentOptions, LoopOptions, Platform, AgentUsage, AgentInputItem };
 
 export function getCachedUsage(chatId: number): AgentUsage | undefined {
   return getProvider().getCachedUsage(chatId);
@@ -26,7 +27,7 @@ export function getCachedUsage(chatId: number): AgentUsage | undefined {
 
 export async function sendToAgent(
   chatId: number,
-  message: string,
+  message: string | AgentInputItem[],
   options: AgentOptions = {},
 ): Promise<AgentResponse> {
   return getProvider().send(chatId, message, options);

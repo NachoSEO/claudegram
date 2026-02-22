@@ -30,6 +30,7 @@ import type {
   AgentUsage,
   AgentResponse,
   AgentOptions,
+  AgentInputItem,
   Cancellable,
 } from './types.js';
 
@@ -82,7 +83,7 @@ export class ClaudeProvider implements AgentProvider {
 
   async send(
     chatId: number,
-    message: string,
+    message: string | AgentInputItem[],
     options: AgentOptions,
   ): Promise<AgentResponse> {
     const { onProgress, onToolStart, onToolEnd, abortController, command, model, platform } = options;
@@ -92,13 +93,15 @@ export class ClaudeProvider implements AgentProvider {
       throw new Error('No active session. Use /project to set working directory.');
     }
 
-    sessionManager.updateActivity(chatId, message);
+    const logMessage = Array.isArray(message) ? '[complex-input]' : message;
+
+    sessionManager.updateActivity(chatId, logMessage);
 
     const history = this.conversationHistory.get(chatId) || [];
 
-    let prompt = message;
+    let prompt = logMessage;
     if (command === 'explore') {
-      prompt = `Explore the codebase and answer: ${message}`;
+      prompt = `Explore the codebase and answer: ${logMessage}`;
     }
 
     history.push({ role: 'user', content: prompt });

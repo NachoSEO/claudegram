@@ -25,6 +25,8 @@ import { maybeSendDiscordVoiceReply } from '../voice-reply.js';
 import { sendCompactionNotice, sendSessionInitNotice } from '../compaction-notice.js';
 import { transcribeFile } from '../../audio/transcribe.js';
 import * as os from 'os';
+import { user as userItem } from '@openai/agents';
+import type { AgentInputItem } from '@openai/agents';
 import { fileToBase64 } from '../../utils/base64.js';
 
 const UPLOADS_DIR = '.claudegram/uploads';
@@ -178,6 +180,17 @@ async function handleImageAttachment(
     ];
     const agentPrompt = noteLines.join('\n');
 
+    const imageBase64 = fileToBase64(finalPath);
+    const mediaType = (actualType?.mimeType || (ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'application/octet-stream'));
+    const dataUrl = `data:${mediaType};base64,${imageBase64}`;
+
+    const agentItems: AgentInputItem[] = [
+      userItem([
+        { type: 'input_text', text: agentPrompt },
+        { type: 'input_image', image: dataUrl },
+      ]),
+    ];
+
     if (isProcessing(chatId)) {
       const position = getQueuePosition(chatId) + 1;
       await message.reply(`Queued (position ${position})`);
@@ -199,7 +212,7 @@ async function handleImageAttachment(
       setAbortController(chatId, abortController);
 
       try {
-        const response = await sendToAgent(chatId, agentPrompt, {
+        const response = await sendToAgent(chatId, agentItems as any, {
           onProgress: (progressText) => {
             discordMessageSender.updateStream(channelId, progressText);
           },

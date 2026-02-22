@@ -7,6 +7,15 @@
 
 export type Platform = 'telegram' | 'discord';
 
+/**
+ * OpenAI Agents SDK structured input items.
+ *
+ * Imported lazily here so callers can pass rich inputs (e.g. images/files)
+ * through the provider abstraction without depending on OpenAI-specific
+ * modules at call sites.
+ */
+export type AgentInputItem = import('@openai/agents').AgentInputItem;
+
 export interface AgentUsage {
   inputTokens: number;
   outputTokens: number;
@@ -49,7 +58,7 @@ export interface Cancellable {
 export interface AgentProvider {
   send(
     chatId: number,
-    message: string,
+    message: string | AgentInputItem[],
     options: AgentOptions,
   ): Promise<AgentResponse>;
 
