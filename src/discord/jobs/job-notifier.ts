@@ -1,5 +1,5 @@
 import { ButtonInteraction, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, InteractionReplyOptions, Message, TextBasedChannel } from 'discord.js';
-import { jobRunner } from '../../jobs';
+import { jobRunner } from '../../jobs/index.js';
 import { JobEvent, JobSnapshot } from '../../jobs/core/job-types';
 import { splitDiscordMessage } from '../markdown.js';
 
