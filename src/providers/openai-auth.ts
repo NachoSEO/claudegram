@@ -279,10 +279,34 @@ export async function getAuthenticatedClient(): Promise<OpenAI | undefined> {
         pathname.endsWith('/responses') || pathname.endsWith('/completions');
 
       // Codex backend rejects store: true on responses/completions payloads.
+      // Also strip reasoning item references and previous_response_id — with
+      // store: false the backend doesn't persist items, so follow-up requests
+      // that reference rs_* IDs or a previous response will 404.
       if (isResponsesLikeEndpoint && init?.body && typeof init.body === 'string') {
         try {
           const body = JSON.parse(init.body) as Record<string, unknown>;
           body.store = false;
+
+          // Remove previous_response_id — forces inline input mode
+          delete body.previous_response_id;
+
+          // Strip reasoning items from input array — the Codex backend
+          // can't look up rs_* IDs when store=false. The model doesn't
+          // need its own reasoning output to continue the conversation.
+          if (Array.isArray(body.input)) {
+            body.input = (body.input as Array<Record<string, unknown>>).filter(
+              (item) => {
+                // Remove items that are just { type: "item_reference", id: "rs_..." }
+                if (item.type === 'item_reference' && typeof item.id === 'string' && item.id.startsWith('rs_')) {
+                  return false;
+                }
+                // Remove inline reasoning items
+                if (item.type === 'reasoning') return false;
+                return true;
+              },
+            );
+          }
+
           init = { ...init, body: JSON.stringify(body) };
         } catch {
           // not JSON, pass through
