@@ -26,56 +26,28 @@ import {
   getTimingReport,
   type AgentTimer,
 } from '../utils/agent-timer.js';
+import { userPreferences } from '../providers/user-preferences.js';
+import { BoundedMap } from '../utils/bounded-map.js';
 
-export interface AgentUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  totalCostUsd: number;
-  contextWindow: number;
-  numTurns: number;
-  model: string;
-}
-
-interface AgentResponse {
-  text: string;
-  toolsUsed: string[];
-  usage?: AgentUsage;
-  compaction?: { trigger: 'manual' | 'auto'; preTokens: number };
-  sessionInit?: { model: string; sessionId: string };
-}
+import type { AgentUsage, AgentResponse, AgentOptions, LoopOptions } from '../providers/types.js';
+export type { AgentUsage };
 
 interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
 }
 
-interface AgentOptions {
-  onProgress?: (text: string) => void;
-  onToolStart?: (toolName: string, input?: Record<string, unknown>) => void;
-  onToolEnd?: () => void;
-  abortController?: AbortController;
-  command?: string;
-  model?: string;
-  telegramCtx?: Context;
-}
-
-interface LoopOptions extends AgentOptions {
-  maxIterations?: number;
-  onIterationComplete?: (iteration: number, response: string) => void;
-}
-
-const conversationHistory: Map<string, ConversationMessage[]> = new Map();
+const conversationHistory = new BoundedMap<string, ConversationMessage[]>(1000);
 
 // Track Claude Code session IDs per session for conversation continuity
-const chatSessionIds: Map<string, string> = new Map();
+const chatSessionIds = new BoundedMap<string, string>(1000);
 
 // Track current model per session (default: opus)
-const chatModels: Map<string, string> = new Map();
+// chatModels is intentionally unbounded — it's backed by persistent preferences
+const chatModels = new Map<string, string>();
 
 // Cache latest usage per session for /context and /status commands
-const chatUsageCache: Map<string, AgentUsage> = new Map();
+const chatUsageCache = new BoundedMap<string, AgentUsage>(1000);
 
 export function getCachedUsage(sessionKey: string): AgentUsage | undefined {
   return chatUsageCache.get(sessionKey);
@@ -439,7 +411,7 @@ export async function sendToAgent(
     const mcpServers: Record<string, McpServerConfig> = {};
     if (options.telegramCtx) {
       const server = createClaudegramMcpServer({
-        telegramCtx: options.telegramCtx,
+        telegramCtx: options.telegramCtx as Context,
         sessionKey,
       });
       mcpServers['claudegram-tools'] = server;
@@ -771,16 +743,26 @@ export function clearConversation(sessionKey: string): void {
   chatUsageCache.delete(sessionKey);
 }
 
-export function setModel(sessionKey: string, model: string): void {
-  chatModels.set(sessionKey, model);
+export function setModel(chatId: number, model: string): void {
+  chatModels.set(String(chatId), model);
+  userPreferences.setModel(chatId, model);
 }
 
-export function getModel(sessionKey: string): string {
-  return chatModels.get(sessionKey) || 'opus';
+export function getModel(chatId: number): string {
+  // Check in-memory cache first, then persistence
+  let model = chatModels.get(String(chatId));
+  if (!model) {
+    model = userPreferences.getModel(chatId);
+    if (model) {
+      chatModels.set(String(chatId), model);
+    }
+  }
+  return model || 'opus';
 }
 
-export function clearModel(sessionKey: string): void {
-  chatModels.delete(sessionKey);
+export function clearModel(chatId: number): void {
+  chatModels.delete(String(chatId));
+  userPreferences.clearModel(chatId);
 }
 
 export function isDangerousMode(): boolean {

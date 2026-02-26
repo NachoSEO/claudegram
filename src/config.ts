@@ -199,6 +199,16 @@ const envSchema = z.object({
     .string()
     .default('0')
     .transform((val) => parseInt(val, 10)), // 0 = disabled
+  // OpenCode provider integration
+  OPENCODE_ENABLED: z
+    .string()
+    .default('false')
+    .transform((val) => val.toLowerCase() === 'true'),
+  OPENCODE_BASE_URL: z.string().optional(),
+  OPENCODE_PORT: z
+    .string()
+    .default('4096')
+    .transform((val) => parseInt(val, 10)),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -1720,6 +1720,11 @@
             <h3>Model Picker</h3>
             <p>Switch between Claude models (Opus, Sonnet, Haiku) with /model. Default: Opus for best results.</p>
           </div>
+          <div class="feature-card" data-category="core">
+            <div class="feature-icon">🔌</div>
+            <h3>Provider Switching</h3>
+            <p>Switch between Claude and OpenCode with /provider. Access 75+ LLM providers when Claude is unavailable.</p>
+          </div>
           <div class="feature-card" data-category="session">
             <div class="feature-icon">🚀</div>
             <h3>Teleport to Terminal</h3>
@@ -1842,8 +1847,12 @@
           </h3>
           <div class="commands-grid">
             <div class="command-row">
+              <code class="command-code">/provider</code>
+              <span class="command-desc">Switch AI provider (Claude / OpenCode)</span>
+            </div>
+            <div class="command-row">
               <code class="command-code">/model</code>
-              <span class="command-desc">Switch Claude model (opus/sonnet/haiku)</span>
+              <span class="command-desc">Switch AI model (provider-aware)</span>
             </div>
             <div class="command-row">
               <code class="command-code">/mode</code>
