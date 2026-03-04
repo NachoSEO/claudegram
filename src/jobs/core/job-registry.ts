@@ -99,6 +99,7 @@ export class JobRegistry {
   }
 
   reserveIdempotency(key: string, jobId: string): { ok: true } | { ok: false; existingJobId: string } {
+    this.sweepIdempotencyActive();
     const existing = this.idempotencyActive.get(key);
     if (existing) return { ok: false, existingJobId: existing };
     this.idempotencyActive.set(key, jobId);
@@ -139,7 +140,23 @@ export class JobRegistry {
       }
     }
 
+    this.idempotencyActive.clear();
+    for (const j of this.jobs.values()) {
+      if (j.idempotencyKey && (j.state === 'queued' || j.state === 'running')) {
+        this.idempotencyActive.set(j.idempotencyKey, j.jobId);
+      }
+    }
+
     this.sweep();
+  }
+
+  sweepIdempotencyActive() {
+    for (const [key, jobId] of this.idempotencyActive) {
+      const j = this.jobs.get(jobId);
+      if (!j || (j.state !== 'queued' && j.state !== 'running')) {
+        this.idempotencyActive.delete(key);
+      }
+    }
   }
 
   reconcileStartup(reason: string, mode: 'failed' | 'timeout' = 'failed') {

@@ -77,7 +77,14 @@ export function attachJobNotifier(client: any) {
 
         try {
           const ch = await client.channels.fetch(item.threadId ?? item.channelId);
-          if (!ch || !('send' in ch)) continue;
+          if (!ch) {
+            jobNotificationOutbox.markAttemptFailure(item.key, 'channel_unavailable');
+            continue;
+          }
+          if (!('send' in ch)) {
+            jobNotificationOutbox.markAttemptFailure(item.key, 'channel_send_unsupported');
+            continue;
+          }
 
           const jobs = item.jobs
             .slice(-5)
