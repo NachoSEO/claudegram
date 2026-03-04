@@ -193,6 +193,13 @@ export class OpenAIProvider implements AgentProvider {
       effectiveModel = defaultModel;
     }
 
+    // Some OAuth-backed accounts may not have access to spark-tier codex models.
+    // Gracefully downgrade to default model for reliability in background jobs.
+    if (this.authMode === 'oauth' && effectiveModel === 'gpt-5.3-codex-spark') {
+      console.warn('[OpenAI] OAuth mode may not support gpt-5.3-codex-spark. Falling back to default model.');
+      effectiveModel = defaultModel;
+    }
+
     const contextWindow = getContextWindow(effectiveModel);
     // Dangerous tools are controlled only by DANGEROUS_MODE, regardless of auth mode.
     // This allows full local tool access even when using OAuth auth.
