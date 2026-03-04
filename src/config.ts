@@ -33,6 +33,12 @@ const envSchema = z.object({
   MCP_MEMORY_PROJECT: z.string().default(''),
   MCP_PLAYWRIGHT_COMMAND: z.string().default(''),
   MCP_PLAYWRIGHT_ARGS: z.string().default(''),  // JSON array, e.g. '["-y","@playwright/mcp@latest","--headless"]'
+  MCP_CONTEXT7_ENABLED: z
+    .string()
+    .default('false')
+    .transform((val) => val.toLowerCase() === 'true'),
+  MCP_CONTEXT7_COMMAND: z.string().default(''),
+  MCP_CONTEXT7_ARGS: z.string().default(''),
   WORKSPACE_DIR: z.string().default(process.env.HOME || '.'),
   CLAUDE_EXECUTABLE_PATH: z.string().default('claude'),
   CLAUDE_USE_BUNDLED_EXECUTABLE: z

@@ -78,6 +78,16 @@ function getServerDefinitions(): MCPServerDef[] {
     });
   }
 
+  // Context7 (documentation/research MCP) — opt-in via MCP_CONTEXT7_ENABLED
+  if (config.MCP_CONTEXT7_ENABLED) {
+    servers.push({
+      name: 'context7',
+      command: config.MCP_CONTEXT7_COMMAND || 'npx',
+      args: parseArgs(config.MCP_CONTEXT7_ARGS, ['-y', '@upstash/context7-mcp']),
+      enabled: true,
+    });
+  }
+
   return servers;
 }
 
