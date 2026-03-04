@@ -11,6 +11,7 @@
  */
 
 import { exec, execFile } from 'node:child_process';
+import crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -667,6 +668,11 @@ function createApplyPatchFunctionTool(cwd: string) {
   });
 }
 
+function makeIdempotencyKey(name: string, origin: { channelId: string; userId: string; threadId?: string }, payload: unknown): string {
+  const raw = JSON.stringify({ name, channelId: origin.channelId, userId: origin.userId, threadId: origin.threadId, payload });
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
 function createDelegateDeepTaskTool() {
   return tool({
     name: 'delegate_deep_task',
@@ -703,11 +709,19 @@ function createDelegateDeepTaskTool() {
           return '[error] delegate_deep_task unavailable: missing discord job origin';
         }
 
+        const idempotencyKey = makeIdempotencyKey('agent:autonomous-deep-loop', origin, {
+          chatId,
+          task: trimmed,
+          model: model ?? null,
+          max_iterations: max_iterations ?? null,
+        });
+
         const jobId = jobRunner.enqueue({
           name: 'agent:autonomous-deep-loop',
           origin,
           handler,
           timeoutMs: 1000 * 60 * 30,
+          idempotencyKey,
         });
 
         return JSON.stringify({
@@ -751,8 +765,14 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
           return '[error] delegate_coderabbit_review unavailable: missing discord job origin';
         }
 
-        const jobIds = targets.map((t) =>
-          jobRunner.enqueue({
+        const jobIds = targets.map((t) => {
+          const idempotencyKey = makeIdempotencyKey('coderabbit-review', toolOrigin, {
+            repoPath,
+            baseRef,
+            target: t,
+            promptOnly: true,
+          });
+          return jobRunner.enqueue({
             name: 'coderabbit-review',
             origin: toolOrigin,
             handler: async (ctx) =>
@@ -768,8 +788,9 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
                 createdAt: Date.now(),
               } as any),
             timeoutMs: 1000 * 60 * 20,
-          }),
-        );
+            idempotencyKey,
+          });
+        });
 
         return JSON.stringify({
           status: 'queued',
@@ -827,11 +848,19 @@ function createDelegateCodexHighReviewTool() {
           return '[error] delegate_codex_high_review unavailable: missing discord job origin';
         }
 
+        const idempotencyKey = makeIdempotencyKey('agent:codex-high-review', origin, {
+          chatId,
+          task: reviewTask,
+          model: 'gpt-5.3-codex-high',
+          max_iterations: max_iterations ?? null,
+        });
+
         const jobId = jobRunner.enqueue({
           name: 'agent:codex-high-review',
           origin,
           handler,
           timeoutMs: 1000 * 60 * 30,
+          idempotencyKey,
         });
 
         return JSON.stringify({

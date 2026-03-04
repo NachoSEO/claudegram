@@ -11,6 +11,7 @@ type RegistryOpts = {
 export class JobRegistry {
   private opts: RegistryOpts;
   private jobs = new Map<string, JobSnapshot>();
+  private idempotencyActive = new Map<string, string>();
 
   constructor(opts: RegistryOpts) {
     this.opts = opts;
@@ -50,6 +51,9 @@ export class JobRegistry {
     }
 
     switch (ev.type) {
+      case 'job:idempotency':
+        existing.idempotencyKey = ev.key;
+        break;
       case 'job:start':
         existing.state = 'running';
         existing.startedAt = now;
@@ -67,6 +71,7 @@ export class JobRegistry {
         existing.state = ev.state as JobState;
         existing.endedAt = now;
         existing.exitCode = ev.exitCode;
+        if (existing.idempotencyKey) this.idempotencyActive.delete(existing.idempotencyKey);
         break;
       case 'job:result':
         existing.resultSummary = ev.summary;
@@ -91,6 +96,17 @@ export class JobRegistry {
     const j = this.jobs.get(jobId);
     if (!j) return;
     j.error = error;
+  }
+
+  reserveIdempotency(key: string, jobId: string): { ok: true } | { ok: false; existingJobId: string } {
+    const existing = this.idempotencyActive.get(key);
+    if (existing) return { ok: false, existingJobId: existing };
+    this.idempotencyActive.set(key, jobId);
+    return { ok: true };
+  }
+
+  releaseIdempotency(key: string) {
+    this.idempotencyActive.delete(key);
   }
 
   bootstrapFromDisk() {

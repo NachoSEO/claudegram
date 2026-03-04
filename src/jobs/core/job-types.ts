@@ -4,6 +4,7 @@ export type JobLogLevel = 'info' | 'warn' | 'error';
 
 export type JobEvent =
   | { type: 'job:queued'; jobId: string; name: string; at: number }
+  | { type: 'job:idempotency'; jobId: string; key: string; at: number }
   | { type: 'job:start'; jobId: string; at: number }
   | { type: 'job:progress'; jobId: string; message: string; at: number }
   | { type: 'job:log'; jobId: string; level: JobLogLevel; message: string; at: number }
@@ -23,6 +24,7 @@ export type JobSnapshot = {
   jobId: string;
   name: string;
   createdAt: number;
+  idempotencyKey?: string;
   startedAt?: number;
   endedAt?: number;
   state: JobState;

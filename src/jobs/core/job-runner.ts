@@ -9,6 +9,7 @@ type EnqueueOpts = {
   handler: JobHandler;
   timeoutMs?: number;
   stallTimeoutMs?: number;
+  idempotencyKey?: string;
 };
 
 type RetrySpec = {
@@ -53,8 +54,16 @@ export class JobRunner {
     const jobId = crypto.randomUUID();
     const at = Date.now();
 
+    if (opts.idempotencyKey) {
+      const reserved = this.registry.reserveIdempotency(opts.idempotencyKey, jobId);
+      if (!reserved.ok) return reserved.existingJobId;
+    }
+
     this.registry.apply({ type: 'job:queued', jobId, name: opts.name, at });
     this.registry.setOrigin(jobId, opts.origin);
+    if (opts.idempotencyKey) {
+      this.registry.apply({ type: 'job:idempotency', jobId, key: opts.idempotencyKey, at });
+    }
     this.emit({ type: 'job:queued', jobId, name: opts.name, at });
 
     this.queue.push({ ...opts, jobId, createdAt: at });

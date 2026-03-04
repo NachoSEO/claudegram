@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   SlashCommandBuilder,
   type ButtonInteraction,
@@ -17,6 +18,15 @@ import { postJobStarted } from '../jobs/job-notifier.js';
 
 function repoPathFromEnvOrCwd() {
   return process.env.CLAUDEGRAM_REPO_PATH || process.cwd();
+}
+
+function makeIdempotencyKey(
+  name: string,
+  origin: { channelId: string; userId: string; threadId?: string },
+  payload: unknown,
+): string {
+  const raw = JSON.stringify({ name, channelId: origin.channelId, userId: origin.userId, threadId: origin.threadId, payload });
+  return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
 export const devopsSlash = new SlashCommandBuilder()
@@ -159,16 +169,24 @@ export async function devopsCommand(interaction: ChatInputCommandInteraction) {
     handler = agentDeepLoopJob(payload);
   }
 
+  const origin = {
+    guildId: interaction.guildId ?? undefined,
+    channelId: interaction.channelId,
+    threadId: interaction.channel?.isThread() ? interaction.channelId : undefined,
+    userId: interaction.user.id,
+  };
+  const idempotencyKey = makeIdempotencyKey(`devops:${jobName}`, origin, {
+    repoPath,
+    deepTask: deepTask ?? null,
+    deepModel: deepModel ?? null,
+  });
+
   const jobId = jobRunner.enqueue({
     name: `devops:${jobName}`,
-    origin: {
-      guildId: interaction.guildId ?? undefined,
-      channelId: interaction.channelId,
-      threadId: interaction.channel?.isThread() ? interaction.channelId : undefined,
-      userId: interaction.user.id,
-    },
+    origin,
     handler,
     timeoutMs: jobName === 'agent-loop-30m' ? 1000 * 60 * 30 : 1000 * 60 * 15,
+    idempotencyKey,
   });
 
   await postJobStarted(interaction, jobId);
