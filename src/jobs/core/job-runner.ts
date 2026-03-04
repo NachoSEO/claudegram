@@ -8,12 +8,15 @@ type EnqueueOpts = {
   origin: JobOrigin;
   handler: JobHandler;
   timeoutMs?: number;
+  stallTimeoutMs?: number;
 };
 
 type Running = {
   jobId: string;
   abort: AbortController;
   timeout?: NodeJS.Timeout;
+  stallWatchdog?: NodeJS.Timeout;
+  lastActivityAt: number;
 };
 
 export class JobRunner {
@@ -103,11 +106,12 @@ export class JobRunner {
     const abort = new AbortController();
     const atStart = Date.now();
 
-    this.running = { jobId, abort };
+    this.running = { jobId, abort, lastActivityAt: atStart };
     this.registry.apply({ type: 'job:start', jobId, at: atStart });
     this.emit({ type: 'job:start', jobId, at: atStart });
 
     let timedOut = false;
+    let stalledOut = false;
     if (next.timeoutMs && next.timeoutMs > 0) {
       const t = setTimeout(() => {
         timedOut = true;
@@ -116,16 +120,33 @@ export class JobRunner {
       this.running.timeout = t;
     }
 
+    const stallTimeoutMs =
+      typeof next.stallTimeoutMs === 'number' && next.stallTimeoutMs > 0
+        ? next.stallTimeoutMs
+        : 1000 * 60 * 6;
+    const watchdogTickMs = Math.min(30_000, Math.max(5_000, Math.floor(stallTimeoutMs / 6)));
+    this.running.stallWatchdog = setInterval(() => {
+      const current = this.running;
+      if (!current || current.jobId !== jobId) return;
+      const idleMs = Date.now() - current.lastActivityAt;
+      if (idleMs >= stallTimeoutMs) {
+        stalledOut = true;
+        abort.abort();
+      }
+    }, watchdogTickMs);
+
     const ctx: JobRunContext = {
       jobId,
       signal: abort.signal,
       progress: (message) => {
         const at = Date.now();
+        if (this.running?.jobId === jobId) this.running.lastActivityAt = at;
         this.registry.apply({ type: 'job:progress', jobId, message, at });
         this.emit({ type: 'job:progress', jobId, message, at });
       },
       log: (level, message) => {
         const at = Date.now();
+        if (this.running?.jobId === jobId) this.running.lastActivityAt = at;
         this.registry.apply({ type: 'job:log', jobId, level, message, at });
         this.emit({ type: 'job:log', jobId, level, message, at });
       },
@@ -140,7 +161,7 @@ export class JobRunner {
     } catch (err: any) {
       const atEnd = Date.now();
       const isAbort = abort.signal.aborted;
-      const state = timedOut ? 'timeout' : isAbort ? 'canceled' : 'failed';
+      const state = timedOut || stalledOut ? 'timeout' : isAbort ? 'canceled' : 'failed';
       const msg = err?.stack || err?.message || String(err);
       this.registry.setError(jobId, msg);
       ctx.log('error', msg);
@@ -148,6 +169,7 @@ export class JobRunner {
       this.emit({ type: 'job:end', jobId, state, exitCode: null, at: atEnd });
     } finally {
       if (this.running?.timeout) clearTimeout(this.running.timeout);
+      if (this.running?.stallWatchdog) clearInterval(this.running.stallWatchdog);
       this.running = null;
       // next
       void this.pump();

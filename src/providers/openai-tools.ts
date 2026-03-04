@@ -698,10 +698,10 @@ function createDelegateDeepTaskTool() {
               : undefined,
         });
 
-        const origin = getCurrentToolOrigin() ?? {
-          channelId: `chat:${chatId}`,
-          userId: `chat:${chatId}`,
-        };
+        const origin = getCurrentToolOrigin();
+        if (!origin?.channelId || !origin?.userId) {
+          return '[error] delegate_deep_task unavailable: missing discord job origin';
+        }
 
         const jobId = jobRunner.enqueue({
           name: 'agent:autonomous-deep-loop',
@@ -747,15 +747,14 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
           selectedTarget === 'all' ? ['committed', 'uncommitted'] : [selectedTarget];
 
         const toolOrigin = getCurrentToolOrigin();
+        if (!toolOrigin?.channelId || !toolOrigin?.userId) {
+          return '[error] delegate_coderabbit_review unavailable: missing discord job origin';
+        }
+
         const jobIds = targets.map((t) =>
           jobRunner.enqueue({
             name: 'coderabbit-review',
-            origin:
-              toolOrigin ??
-              {
-                channelId: 'agent:tool',
-                userId: 'agent:tool',
-              },
+            origin: toolOrigin,
             handler: async (ctx) =>
               coderabbitReview({
                 id: ctx.jobId,
@@ -823,10 +822,10 @@ function createDelegateCodexHighReviewTool() {
               : undefined,
         });
 
-        const origin = getCurrentToolOrigin() ?? {
-          channelId: `chat:${chatId}`,
-          userId: `chat:${chatId}`,
-        };
+        const origin = getCurrentToolOrigin();
+        if (!origin?.channelId || !origin?.userId) {
+          return '[error] delegate_codex_high_review unavailable: missing discord job origin';
+        }
 
         const jobId = jobRunner.enqueue({
           name: 'agent:codex-high-review',
