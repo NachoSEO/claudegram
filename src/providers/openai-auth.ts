@@ -30,6 +30,8 @@ const CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 const TOKEN_FILE = path.join(os.homedir(), '.claudegram', 'openai-auth.json');
 /** Refresh when token expires within this many ms. */
 const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes
+/** Fallback expiry when JWT decode fails (8 days). */
+const FALLBACK_EXPIRY_MS = 8 * 24 * 60 * 60 * 1000;
 
 const tokenSchema = z.object({
   /** OAuth access token — used directly as bearer. */
@@ -60,6 +62,46 @@ const codexAuthSchema = z.object({
   }),
 });
 
+// ---------------------------------------------------------------------------
+//  JWT helpers
+// ---------------------------------------------------------------------------
+
+/** Decode the `exp` claim from an access token JWT (seconds → ms). */
+function decodeJwtExpiry(accessToken: string): number {
+  try {
+    const parts = accessToken.split('.');
+    if (parts.length < 2) return Date.now() + FALLBACK_EXPIRY_MS;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    if (typeof payload.exp === 'number') return payload.exp * 1000;
+    return Date.now() + FALLBACK_EXPIRY_MS;
+  } catch {
+    return Date.now() + FALLBACK_EXPIRY_MS;
+  }
+}
+
+/**
+ * Load tokens directly from Codex CLI's auth file.
+ * Used both as initial fallback and as recovery when our refresh token is stale.
+ */
+function loadCodexCliTokens(): StoredTokens | undefined {
+  try {
+    if (!fs.existsSync(CODEX_AUTH_FILE)) return undefined;
+    const raw = JSON.parse(fs.readFileSync(CODEX_AUTH_FILE, 'utf8'));
+    const result = codexAuthSchema.safeParse(raw);
+    if (!result.success) return undefined;
+    if (result.data.auth_mode !== 'chatgpt') return undefined;
+
+    return {
+      access_token: result.data.tokens.access_token,
+      refresh_token: result.data.tokens.refresh_token,
+      expires_at: decodeJwtExpiry(result.data.tokens.access_token),
+      chatgpt_account_id: result.data.tokens.account_id,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function loadStoredTokens(): StoredTokens | undefined {
   // Try our own token file first
   try {
@@ -74,27 +116,13 @@ function loadStoredTokens(): StoredTokens | undefined {
   }
 
   // Fall back to Codex CLI auth file
-  try {
-    if (!fs.existsSync(CODEX_AUTH_FILE)) return undefined;
-    const raw = JSON.parse(fs.readFileSync(CODEX_AUTH_FILE, 'utf8'));
-    const result = codexAuthSchema.safeParse(raw);
-    if (!result.success) return undefined;
-    if (result.data.auth_mode !== 'chatgpt') return undefined;
-
+  const codexTokens = loadCodexCliTokens();
+  if (codexTokens) {
     console.log('[OpenAI Auth] Using Codex CLI tokens from ~/.codex/auth.json');
-    const tokens: StoredTokens = {
-      access_token: result.data.tokens.access_token,
-      refresh_token: result.data.tokens.refresh_token,
-      // Access tokens from Codex CLI have ~10 day expiry, set a conservative estimate
-      expires_at: Date.now() + 8 * 24 * 60 * 60 * 1000,
-      chatgpt_account_id: result.data.tokens.account_id,
-    };
-    // Save to our own file so we can track refresh independently
-    saveTokens(tokens);
-    return tokens;
-  } catch {
-    return undefined;
+    saveTokens(codexTokens);
+    return codexTokens;
   }
+  return undefined;
 }
 
 function saveTokens(tokens: StoredTokens): void {
@@ -205,6 +233,8 @@ async function refreshAccessToken(refreshToken: string): Promise<StoredTokens> {
 
 /** Cached tokens in memory to avoid re-reading file on every request. */
 let cachedTokens: StoredTokens | undefined;
+/** Mutex: coalesce concurrent refresh attempts into one. */
+let activeRefresh: Promise<StoredTokens | undefined> | undefined;
 
 /**
  * Check if OAuth tokens exist and are loadable.
@@ -215,9 +245,79 @@ export function hasOAuthTokens(): boolean {
   return cachedTokens !== undefined;
 }
 
+/** Returns true if the error indicates a consumed/reused refresh token. */
+function isRefreshTokenReused(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes('refresh_token_reused') || msg.includes('already been used');
+}
+
+/**
+ * Core refresh logic — tries our token first, falls back to Codex CLI.
+ */
+async function performRefresh(): Promise<StoredTokens | undefined> {
+  if (!cachedTokens) return undefined;
+
+  // Attempt 1: refresh with our stored refresh token
+  try {
+    const refreshed = await refreshAccessToken(cachedTokens.refresh_token);
+    cachedTokens = refreshed;
+    saveTokens(refreshed);
+    console.log('[OpenAI Auth] Token refreshed successfully');
+    return refreshed;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[OpenAI Auth] Refresh attempt 1 failed:', msg);
+
+    // If the refresh token was consumed (e.g. by Codex CLI rotating it),
+    // try to recover by re-importing fresh tokens from Codex CLI.
+    if (isRefreshTokenReused(err)) {
+      console.log('[OpenAI Auth] Refresh token was consumed externally — falling back to Codex CLI');
+      const codexTokens = loadCodexCliTokens();
+
+      if (!codexTokens) {
+        console.error('[OpenAI Auth] No Codex CLI tokens available for recovery');
+        cachedTokens = undefined;
+        return undefined;
+      }
+
+      // If the Codex CLI access token is still valid, just use it directly
+      if (Date.now() < codexTokens.expires_at - REFRESH_BUFFER_MS) {
+        console.log('[OpenAI Auth] Recovered with valid Codex CLI access token');
+        cachedTokens = codexTokens;
+        saveTokens(codexTokens);
+        return codexTokens;
+      }
+
+      // Codex CLI token also expiring — try refreshing with its refresh token
+      try {
+        console.log('[OpenAI Auth] Codex CLI token also expiring, refreshing with its refresh token...');
+        const refreshed = await refreshAccessToken(codexTokens.refresh_token);
+        cachedTokens = refreshed;
+        saveTokens(refreshed);
+        console.log('[OpenAI Auth] Recovered via Codex CLI refresh token');
+        return refreshed;
+      } catch (retryErr) {
+        console.error(
+          '[OpenAI Auth] Codex CLI fallback refresh also failed:',
+          retryErr instanceof Error ? retryErr.message : retryErr,
+        );
+        console.error('[OpenAI Auth] All recovery exhausted — run `codex login` to re-authenticate');
+        cachedTokens = undefined;
+        return undefined;
+      }
+    }
+
+    // Non-recoverable error (network, server, etc.)
+    console.error('[OpenAI Auth] Token refresh failed (non-recoverable):', msg);
+    cachedTokens = undefined;
+    return undefined;
+  }
+}
+
 /**
  * Get valid tokens, refreshing if needed.
- * Returns undefined if no tokens are stored.
+ * Uses a mutex to coalesce concurrent refresh attempts.
+ * Falls back to Codex CLI tokens when our refresh token is stale.
  */
 export async function getValidTokens(): Promise<StoredTokens | undefined> {
   if (!cachedTokens) {
@@ -225,21 +325,19 @@ export async function getValidTokens(): Promise<StoredTokens | undefined> {
   }
   if (!cachedTokens) return undefined;
 
-  // Refresh if within buffer of expiry
-  if (Date.now() >= cachedTokens.expires_at - REFRESH_BUFFER_MS) {
-    console.log('[OpenAI Auth] Token expiring soon, refreshing...');
-    try {
-      cachedTokens = await refreshAccessToken(cachedTokens.refresh_token);
-      saveTokens(cachedTokens);
-      console.log('[OpenAI Auth] Token refreshed successfully');
-    } catch (err) {
-      console.error('[OpenAI Auth] Token refresh failed:', err instanceof Error ? err.message : err);
-      cachedTokens = undefined;
-      return undefined;
-    }
+  // Token still valid — return immediately
+  if (Date.now() < cachedTokens.expires_at - REFRESH_BUFFER_MS) {
+    return cachedTokens;
   }
 
-  return cachedTokens;
+  // Need to refresh — coalesce concurrent callers behind one promise
+  console.log('[OpenAI Auth] Token expiring soon, refreshing...');
+  if (!activeRefresh) {
+    activeRefresh = performRefresh().finally(() => {
+      activeRefresh = undefined;
+    });
+  }
+  return activeRefresh;
 }
 
 /**
