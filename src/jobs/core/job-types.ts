@@ -7,6 +7,7 @@ export type JobEvent =
   | { type: 'job:start'; jobId: string; at: number }
   | { type: 'job:progress'; jobId: string; message: string; at: number }
   | { type: 'job:log'; jobId: string; level: JobLogLevel; message: string; at: number }
+  | { type: 'job:result'; jobId: string; summary?: string; artifacts?: string[]; at: number }
   | { type: 'job:end'; jobId: string; state: Exclude<JobState, 'queued' | 'running'>; exitCode?: number | null; at: number };
 
 export type JobOrigin = {
@@ -30,6 +31,8 @@ export type JobSnapshot = {
   exitCode?: number | null;
   error?: string;
   logs: Array<{ at: number; level: JobLogLevel; message: string }>;
+  resultSummary?: string;
+  artifacts?: string[];
 };
 
 export type JobRunContext = {
@@ -39,4 +42,8 @@ export type JobRunContext = {
   log: (level: JobLogLevel, message: string) => void;
 };
 
-export type JobHandler = (ctx: JobRunContext) => Promise<{ exitCode?: number | null } | void>;
+export type JobHandler = (ctx: JobRunContext) => Promise<{
+  exitCode?: number | null;
+  resultSummary?: string;
+  artifacts?: string[];
+} | void>;

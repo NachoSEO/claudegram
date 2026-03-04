@@ -16,7 +16,8 @@ export async function handleJobs(interaction: ChatInputCommandInteraction): Prom
   const lines = filtered.map((j) => {
     const runtimeMs = (j.endedAt ?? Date.now()) - (j.startedAt ?? j.createdAt);
     const where = j.origin.threadId ? `thread:${j.origin.threadId}` : `channel:${j.origin.channelId}`;
-    return `- \`${j.jobId}\` • **${j.name}** • ${j.state} • ${Math.round(runtimeMs / 1000)}s • ${where}`;
+    const summary = j.resultSummary ? ` • ${j.resultSummary.slice(0, 90)}` : '';
+    return `- \`${j.jobId}\` • **${j.name}** • ${j.state} • ${Math.round(runtimeMs / 1000)}s • ${where}${summary}`;
   });
 
   await interaction.reply({

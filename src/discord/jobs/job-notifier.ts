@@ -14,11 +14,16 @@ function fmtState(s: JobSnapshot['state']) {
   return '📥 queued';
 }
 
-export function jobActionRow(jobId: string, canCancel: boolean, canRetry = false) {
+export function jobActionRow(jobId: string, canCancel: boolean, canRetry = false, canShowResult = false) {
   const row = new ActionRowBuilder<ButtonBuilder>();
   row.addComponents(
     new ButtonBuilder().setCustomId(`job:logs:${jobId}`).setLabel('Show logs').setStyle(ButtonStyle.Secondary),
   );
+  if (canShowResult) {
+    row.addComponents(
+      new ButtonBuilder().setCustomId(`job:result:${jobId}`).setLabel('Show result').setStyle(ButtonStyle.Success),
+    );
+  }
   if (canCancel) {
     row.addComponents(
       new ButtonBuilder().setCustomId(`job:cancel:${jobId}`).setLabel('Cancel').setStyle(ButtonStyle.Danger),
@@ -37,7 +42,7 @@ export async function postJobStarted(interaction: ChatInputCommandInteraction, j
   const msg = `Job started: **${snap?.name ?? jobId}**\nID: \`${jobId}\`\nState: ${fmtState(snap?.state ?? 'queued')}`;
   const opts: InteractionReplyOptions = {
     content: msg,
-    components: [jobActionRow(jobId, true)],
+    components: [jobActionRow(jobId, true, false, false)],
   };
   await interaction.reply(opts);
 
@@ -126,6 +131,7 @@ export function attachJobNotifier(client: any) {
             snap.jobId,
             snap.state === 'queued' || snap.state === 'running',
             snap.state === 'failed' || snap.state === 'timeout' || snap.state === 'canceled',
+            Boolean(snap.resultSummary || (snap.artifacts && snap.artifacts.length)),
           )],
         });
       } catch {
@@ -155,6 +161,20 @@ export async function handleJobButton(i: ButtonInteraction) {
     return;
   }
 
+  if (action === 'result') {
+    const parts: string[] = [];
+    if (snap.resultSummary) parts.push(`Summary: ${snap.resultSummary}`);
+    if (snap.artifacts?.length) {
+      parts.push('Artifacts:');
+      for (const a of snap.artifacts) parts.push(`- \`${a}\``);
+    }
+    if (!parts.length) parts.push('No structured result artifact available.');
+    const chunks = splitDiscordMessage(parts.join('\n'), 1800);
+    await i.reply({ ephemeral: true, content: chunks[0] });
+    for (const c of chunks.slice(1)) await i.followUp({ ephemeral: true, content: c });
+    return;
+  }
+
   if (action === 'retry') {
     const nextId = jobRunner.retry(jobId);
     if (!nextId) return i.reply({ ephemeral: true, content: `Retry unavailable for job \`${jobId}\`.` });
@@ -162,7 +182,7 @@ export async function handleJobButton(i: ButtonInteraction) {
     return i.reply({
       ephemeral: true,
       content: `Retry queued: \`${nextId}\` for **${next?.name ?? 'job'}**.`,
-      components: [jobActionRow(nextId, true)],
+      components: [jobActionRow(nextId, true, false, false)],
     });
   }
 }

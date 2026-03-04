@@ -66,6 +66,10 @@ export class JobRegistry {
         existing.endedAt = now;
         existing.exitCode = ev.exitCode;
         break;
+      case 'job:result':
+        existing.resultSummary = ev.summary;
+        existing.artifacts = ev.artifacts;
+        break;
       case 'job:queued':
         // ignore
         break;

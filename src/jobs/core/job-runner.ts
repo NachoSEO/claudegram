@@ -184,6 +184,12 @@ export class JobRunner {
       const res = await next.handler(ctx);
       const exitCode = res && 'exitCode' in res ? res.exitCode : 0;
       const atEnd = Date.now();
+      if (res && ('resultSummary' in res || 'artifacts' in res)) {
+        const summary = typeof res.resultSummary === 'string' ? res.resultSummary : undefined;
+        const artifacts = Array.isArray(res.artifacts) ? res.artifacts : undefined;
+        this.registry.apply({ type: 'job:result', jobId, summary, artifacts, at: atEnd });
+        this.emit({ type: 'job:result', jobId, summary, artifacts, at: atEnd });
+      }
       this.registry.apply({ type: 'job:end', jobId, state: 'succeeded', exitCode, at: atEnd });
       this.emit({ type: 'job:end', jobId, state: 'succeeded', exitCode, at: atEnd });
     } catch (err: any) {
