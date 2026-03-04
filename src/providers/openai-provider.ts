@@ -367,6 +367,32 @@ export class OpenAIProvider implements AgentProvider {
 
       console.error('[OpenAI] Full error:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
+
+      const fallbackAlreadyTried = Boolean((options as AgentOptions & { _sparkFallbackTried?: boolean })._sparkFallbackTried);
+      const requestedModelNorm = normalizeModelName(model);
+      const shouldRetryWithFallback =
+        !fallbackAlreadyTried &&
+        /\b400\b/.test(errorMessage) &&
+        (
+          requestedModelNorm === 'gpt-5.3-codex-spark' ||
+          effectiveModel === 'gpt-5.3-codex-spark' ||
+          (requestedModelNorm !== undefined && requestedModelNorm !== defaultModel)
+        );
+
+      if (shouldRetryWithFallback) {
+        console.warn(`[OpenAI] Spark request failed with 400. Retrying once with fallback model: ${defaultModel}`);
+        eventBus.emit('agent:error', {
+          chatId,
+          error: `${errorMessage} (retrying with ${defaultModel})`,
+          timestamp: Date.now(),
+        });
+        return this.send(chatId, message, {
+          ...options,
+          model: defaultModel,
+          _sparkFallbackTried: true,
+        } as AgentOptions);
+      }
+
       eventBus.emit('agent:error', { chatId, error: errorMessage, timestamp: Date.now() });
       eventBus.emit('agent:complete', {
         chatId,
