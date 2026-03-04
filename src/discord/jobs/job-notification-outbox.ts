@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { JobSnapshot, JobState } from '../../jobs/core/job-types.js';
 
 type NonRunningState = Exclude<JobState, 'queued' | 'running'>;
@@ -47,6 +49,35 @@ function toJobDigest(s: JobSnapshot) {
 
 export class JobNotificationOutbox {
   private pendingByKey = new Map<string, OutboxItem>();
+  private persistPath: string;
+
+  constructor(persistPath?: string) {
+    this.persistPath = persistPath ?? path.join(process.cwd(), '.claudegram', 'jobs', 'outbox.json');
+    this.bootstrapFromDisk();
+  }
+
+  private persist() {
+    fs.mkdirSync(path.dirname(this.persistPath), { recursive: true });
+    const data = JSON.stringify(Array.from(this.pendingByKey.values()), null, 2);
+    const tmp = `${this.persistPath}.tmp`;
+    fs.writeFileSync(tmp, data, 'utf8');
+    fs.renameSync(tmp, this.persistPath);
+  }
+
+  private bootstrapFromDisk() {
+    try {
+      if (!fs.existsSync(this.persistPath)) return;
+      const raw = fs.readFileSync(this.persistPath, 'utf8');
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return;
+      for (const it of arr) {
+        if (!it || typeof it.key !== 'string' || typeof it.channelId !== 'string') continue;
+        this.pendingByKey.set(it.key, it as OutboxItem);
+      }
+    } catch {
+      // ignore malformed persisted outbox
+    }
+  }
 
   enqueueFromSnapshot(s: JobSnapshot): OutboxItem | null {
     if (s.state === 'queued' || s.state === 'running') return null;
@@ -73,6 +104,7 @@ export class JobNotificationOutbox {
         createdAt: Date.now(),
       };
       this.pendingByKey.set(key, item);
+      this.persist();
       return item;
     }
 
@@ -80,9 +112,9 @@ export class JobNotificationOutbox {
     existing.jobs = existing.jobs.filter((j) => j.jobId !== digest.jobId);
     existing.jobs.push(digest);
     existing.critical = existing.critical || critical;
+    this.persist();
     return existing;
   }
-
 
   markAttemptFailure(key: string, error: string) {
     const item = this.pendingByKey.get(key);
@@ -92,6 +124,7 @@ export class JobNotificationOutbox {
     item.nextAttemptAt = Date.now() + backoffMs;
     item.lastError = error.slice(0, 240);
     item.status = item.attempts >= 8 ? 'failed' : 'pending';
+    this.persist();
   }
 
   markAttemptSuccess(key: string) {
@@ -111,6 +144,7 @@ export class JobNotificationOutbox {
     if (!item) return;
     item.status = 'sent';
     this.pendingByKey.delete(key);
+    this.persist();
   }
 }
 

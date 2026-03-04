@@ -112,6 +112,9 @@ export function attachJobNotifier(client: any) {
     }, 5000);
   };
 
+  // Flush any persisted pending notifications after restart
+  scheduleDeferredDispatch();
+
   jobRunner.onEvent(async (ev: JobEvent) => {
     const snap = jobRunner.get(ev.jobId);
 
