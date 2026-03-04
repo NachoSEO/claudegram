@@ -65,6 +65,22 @@ export const OPENAI_MODEL_TIERS = {
 
 export const VALID_OPENAI_MODELS = new Set(Object.keys(MODEL_CONTEXT_WINDOWS));
 
+const MODEL_ALIASES: Record<string, string> = {
+  spark: 'gpt-5.3-codex-spark',
+  'codex-spark': 'gpt-5.3-codex-spark',
+  codex: 'gpt-5.3-codex',
+  'codex-high': 'gpt-5.3-codex-high',
+  high: 'gpt-5.3-codex-high',
+};
+
+function normalizeModelName(model?: string): string | undefined {
+  if (!model) return undefined;
+  const trimmed = model.trim();
+  if (!trimmed) return undefined;
+  const lowered = trimmed.toLowerCase();
+  return MODEL_ALIASES[lowered] ?? trimmed;
+}
+
 function getContextWindow(model: string): number {
   return MODEL_CONTEXT_WINDOWS[model] ?? DEFAULT_CONTEXT_WINDOW;
 }
@@ -165,7 +181,18 @@ export class OpenAIProvider implements AgentProvider {
       prompt = `Explore the codebase and answer: ${message}`;
     }
 
-    const effectiveModel = model || this.chatModels.get(chatId) || config.OPENAI_DEFAULT_MODEL;
+    const requestedModel = normalizeModelName(model);
+    const chatModel = normalizeModelName(this.chatModels.get(chatId));
+    const defaultModel = normalizeModelName(config.OPENAI_DEFAULT_MODEL) ?? 'gpt-5.3-codex-high';
+
+    let effectiveModel = requestedModel || chatModel || defaultModel;
+    if (!VALID_OPENAI_MODELS.has(effectiveModel)) {
+      console.warn(
+        `[OpenAI] Unsupported model "${effectiveModel}" (requested=${model ?? 'none'} chat=${this.chatModels.get(chatId) ?? 'none'}). Falling back to ${defaultModel}`,
+      );
+      effectiveModel = defaultModel;
+    }
+
     const contextWindow = getContextWindow(effectiveModel);
     // Dangerous tools are controlled only by DANGEROUS_MODE, regardless of auth mode.
     // This allows full local tool access even when using OAuth auth.
@@ -563,7 +590,13 @@ export class OpenAIProvider implements AgentProvider {
   }
 
   setModel(chatId: number, model: string): void {
-    this.chatModels.set(chatId, model);
+    const normalized = normalizeModelName(model) ?? model;
+    if (!VALID_OPENAI_MODELS.has(normalized)) {
+      throw new Error(
+        `Unsupported OpenAI model: ${model}. Supported: ${Array.from(VALID_OPENAI_MODELS).join(', ')}`,
+      );
+    }
+    this.chatModels.set(chatId, normalized);
   }
 
   getModel(chatId: number): string {
