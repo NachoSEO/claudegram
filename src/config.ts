@@ -2,6 +2,7 @@ import { config as loadEnv } from 'dotenv';
 import { z } from 'zod';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync, readFileSync } from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultEnvPath = path.resolve(__dirname, '..', '.env');
@@ -205,7 +206,7 @@ const envSchema = z.object({
     .transform((val) => parseInt(val, 10)),
   // Factory Droid integration
   DROID_EXEC_PATH: z.string().default('~/.local/bin/droid'),
-  DROID_DEFAULT_MODEL: z.string().default('groq/llama-4-scout-17b-16e-instruct'),
+  DROID_DEFAULT_MODEL: z.string().default('gpt-5.1-codex'),
   DROID_TIMEOUT_MS: z
     .string()
     .default('300000')
@@ -221,6 +222,34 @@ if (!parsed.success) {
 }
 
 export const config = parsed.data;
+
+function loadKeyFromFile(filePath?: string): string | undefined {
+  if (!filePath) return undefined;
+  const resolved = filePath.startsWith('~')
+    ? filePath.replace('~', process.env.HOME || '')
+    : filePath;
+  try {
+    if (!existsSync(resolved)) return undefined;
+    const raw = readFileSync(resolved, 'utf-8');
+    return raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .find((s) => s.length > 0 && !s.startsWith('#'));
+  } catch {
+    return undefined;
+  }
+}
+
+// Optional local key-vault fallback for Groq key
+if (!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY_FILE) {
+  const k = loadKeyFromFile(process.env.GROQ_API_KEY_FILE);
+  if (k) process.env.GROQ_API_KEY = k;
+}
+
+// Ensure local user bin is available in non-interactive service runs
+if (!process.env.PATH?.includes(`${process.env.HOME || ''}/.local/bin`)) {
+  process.env.PATH = `${process.env.HOME || ''}/.local/bin:${process.env.PATH || ''}`;
+}
 
 // Ensure OPENAI_API_KEY is in process.env for the @openai/agents SDK,
 // which reads it directly from the environment.
