@@ -51,6 +51,30 @@ const commands = [
     .setDescription('List all available commands'),
 
   new SlashCommandBuilder()
+    .setName('jobs')
+    .setDescription('List background jobs')
+    .addStringOption(option =>
+      option.setName('state')
+        .setDescription('Optional state filter')
+        .setRequired(false)
+        .addChoices(
+          { name: 'Queued', value: 'queued' },
+          { name: 'Running', value: 'running' },
+          { name: 'Succeeded', value: 'succeeded' },
+          { name: 'Failed', value: 'failed' },
+          { name: 'Canceled', value: 'canceled' },
+          { name: 'Timeout', value: 'timeout' },
+        )
+    )
+    .addIntegerOption(option =>
+      option.setName('limit')
+        .setDescription('How many recent jobs to show (1-25)')
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(25)
+    ),
+
+  new SlashCommandBuilder()
     .setName('reddit')
     .setDescription('Fetch Reddit posts, subreddits, or user profiles')
     .addStringOption(option =>

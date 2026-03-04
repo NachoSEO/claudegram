@@ -11,6 +11,14 @@ type EnqueueOpts = {
   stallTimeoutMs?: number;
 };
 
+type RetrySpec = {
+  name: string;
+  origin: JobOrigin;
+  handler: JobHandler;
+  timeoutMs?: number;
+  stallTimeoutMs?: number;
+};
+
 type Running = {
   jobId: string;
   abort: AbortController;
@@ -25,6 +33,7 @@ export class JobRunner {
   private queue: Array<EnqueueOpts & { jobId: string; createdAt: number }> = [];
   private running: Running | null = null;
   private concurrency: number;
+  private retrySpecs = new Map<string, RetrySpec>();
 
   constructor(registry: JobRegistry, concurrency = 1) {
     this.registry = registry;
@@ -49,8 +58,27 @@ export class JobRunner {
     this.emit({ type: 'job:queued', jobId, name: opts.name, at });
 
     this.queue.push({ ...opts, jobId, createdAt: at });
+    this.retrySpecs.set(jobId, {
+      name: opts.name,
+      origin: { ...opts.origin },
+      handler: opts.handler,
+      timeoutMs: opts.timeoutMs,
+      stallTimeoutMs: opts.stallTimeoutMs,
+    });
     void this.pump();
     return jobId;
+  }
+
+  retry(jobId: string): string | null {
+    const spec = this.retrySpecs.get(jobId);
+    if (!spec) return null;
+    return this.enqueue({
+      name: spec.name,
+      origin: { ...spec.origin },
+      handler: spec.handler,
+      timeoutMs: spec.timeoutMs,
+      stallTimeoutMs: spec.stallTimeoutMs,
+    });
   }
 
   get(jobId: string) {

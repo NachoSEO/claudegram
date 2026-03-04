@@ -11,6 +11,7 @@ import { handleClear } from '../commands/clear.js';
 import { handleProject } from '../commands/project.js';
 import { handleModel } from '../commands/model.js';
 import { handleCommands } from '../commands/commands.js';
+import { handleJobs } from '../commands/jobs.js';
 import { handleReddit } from '../commands/reddit.js';
 import { handleVReddit } from '../commands/vreddit.js';
 import { handleAskClaude } from '../commands/ask-claude.js';
@@ -131,6 +132,9 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
         break;
       case 'commands':
         await handleCommands(command);
+        break;
+      case 'jobs':
+        await handleJobs(command);
         break;
       case 'reddit':
         await handleReddit(command);

@@ -14,7 +14,7 @@ function fmtState(s: JobSnapshot['state']) {
   return '📥 queued';
 }
 
-export function jobActionRow(jobId: string, canCancel: boolean) {
+export function jobActionRow(jobId: string, canCancel: boolean, canRetry = false) {
   const row = new ActionRowBuilder<ButtonBuilder>();
   row.addComponents(
     new ButtonBuilder().setCustomId(`job:logs:${jobId}`).setLabel('Show logs').setStyle(ButtonStyle.Secondary),
@@ -22,6 +22,11 @@ export function jobActionRow(jobId: string, canCancel: boolean) {
   if (canCancel) {
     row.addComponents(
       new ButtonBuilder().setCustomId(`job:cancel:${jobId}`).setLabel('Cancel').setStyle(ButtonStyle.Danger),
+    );
+  }
+  if (canRetry) {
+    row.addComponents(
+      new ButtonBuilder().setCustomId(`job:retry:${jobId}`).setLabel('Retry').setStyle(ButtonStyle.Primary),
     );
   }
   return row;
@@ -117,7 +122,11 @@ export function attachJobNotifier(client: any) {
         const content = `Job: **${snap.name}**\nID: \`${snap.jobId}\`\nState: ${fmtState(snap.state)} (${Math.round(runtimeMs / 1000)}s)${line}`;
         await msg.edit({
           content,
-          components: [jobActionRow(snap.jobId, snap.state === 'queued' || snap.state === 'running')],
+          components: [jobActionRow(
+            snap.jobId,
+            snap.state === 'queued' || snap.state === 'running',
+            snap.state === 'failed' || snap.state === 'timeout' || snap.state === 'canceled',
+          )],
         });
       } catch {
         // ignore
@@ -144,5 +153,16 @@ export async function handleJobButton(i: ButtonInteraction) {
     await i.reply({ ephemeral: true, content: `Logs for \`${jobId}\` (${snap.name})` });
     for (const c of chunks) await i.followUp({ ephemeral: true, content: '```\n' + c + '\n```' });
     return;
+  }
+
+  if (action === 'retry') {
+    const nextId = jobRunner.retry(jobId);
+    if (!nextId) return i.reply({ ephemeral: true, content: `Retry unavailable for job \`${jobId}\`.` });
+    const next = jobRunner.get(nextId);
+    return i.reply({
+      ephemeral: true,
+      content: `Retry queued: \`${nextId}\` for **${next?.name ?? 'job'}**.`,
+      components: [jobActionRow(nextId, true)],
+    });
   }
 }
