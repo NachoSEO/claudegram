@@ -161,7 +161,7 @@ export class OpenAIProvider implements AgentProvider {
     message: string | AgentInputItem[],
     options: AgentOptions,
   ): Promise<AgentResponse> {
-    const { onProgress, onToolStart, onToolEnd, abortController, command, model, platform } = options;
+    const { onProgress, onToolStart, onToolEnd, onProviderEvent, abortController, command, model, platform } = options;
 
     const promptForLog = Array.isArray(message) ? '[complex-input]' : message;
     console.log(`[OpenAI] send() chatId=${chatId} prompt="${promptForLog.slice(0, 120)}..." command=${command || 'chat'}`);
@@ -185,11 +185,25 @@ export class OpenAIProvider implements AgentProvider {
     const chatModel = normalizeModelName(this.chatModels.get(chatId));
     const defaultModel = normalizeModelName(config.OPENAI_DEFAULT_MODEL) ?? 'gpt-5.3-codex-high';
 
+    const emitProviderEvent = (type: string, data?: Record<string, unknown>) => {
+      try {
+        onProviderEvent?.({ type, data });
+      } catch {
+        // never break provider flow on instrumentation
+      }
+    };
+
     let effectiveModel = requestedModel || chatModel || defaultModel;
     if (!VALID_OPENAI_MODELS.has(effectiveModel)) {
       console.warn(
         `[OpenAI] Unsupported model "${effectiveModel}" (requested=${model ?? 'none'} chat=${this.chatModels.get(chatId) ?? 'none'}). Falling back to ${defaultModel}`,
       );
+      emitProviderEvent('model_invalid_fallback', {
+        requestedModel: model ?? null,
+        normalizedRequestedModel: requestedModel ?? null,
+        chatModel: this.chatModels.get(chatId) ?? null,
+        fallbackModel: defaultModel,
+      });
       effectiveModel = defaultModel;
     }
 
@@ -197,10 +211,28 @@ export class OpenAIProvider implements AgentProvider {
     // Gracefully downgrade to default model for reliability in background jobs.
     if (this.authMode === 'oauth' && effectiveModel === 'gpt-5.3-codex-spark') {
       console.warn('[OpenAI] OAuth mode may not support gpt-5.3-codex-spark. Falling back to default model.');
+      emitProviderEvent('oauth_spark_fallback', {
+        attemptedModel: 'gpt-5.3-codex-spark',
+        fallbackModel: defaultModel,
+      });
       effectiveModel = defaultModel;
     }
 
     const contextWindow = getContextWindow(effectiveModel);
+
+    emitProviderEvent('send_config', {
+      authMode: this.authMode,
+      requestedModel: model ?? null,
+      normalizedRequestedModel: requestedModel ?? null,
+      chatModel: this.chatModels.get(chatId) ?? null,
+      effectiveModel,
+      defaultModel,
+      command: command ?? 'chat',
+      hasJobOrigin: Boolean(options.jobOrigin),
+      hasAbortController: Boolean(abortController),
+      fallbackAlreadyTried: Boolean(options._sparkFallbackTried),
+    });
+
     // Dangerous tools are controlled only by DANGEROUS_MODE, regardless of auth mode.
     // This allows full local tool access even when using OAuth auth.
     const dangerousToolsEnabled = config.DANGEROUS_MODE;
@@ -368,7 +400,7 @@ export class OpenAIProvider implements AgentProvider {
       console.error('[OpenAI] Full error:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      const fallbackAlreadyTried = Boolean((options as AgentOptions & { _sparkFallbackTried?: boolean })._sparkFallbackTried);
+      const fallbackAlreadyTried = Boolean(options._sparkFallbackTried);
       const requestedModelNorm = normalizeModelName(model);
       const shouldRetryWithFallback =
         !fallbackAlreadyTried &&
@@ -381,6 +413,12 @@ export class OpenAIProvider implements AgentProvider {
 
       if (shouldRetryWithFallback) {
         console.warn(`[OpenAI] Spark request failed with 400. Retrying once with fallback model: ${defaultModel}`);
+        emitProviderEvent('spark_fallback_retry', {
+          errorMessage,
+          requestedModel: requestedModelNorm ?? null,
+          effectiveModel,
+          fallbackModel: defaultModel,
+        });
         eventBus.emit('agent:error', {
           chatId,
           error: `${errorMessage} (retrying with ${defaultModel})`,
@@ -390,9 +428,15 @@ export class OpenAIProvider implements AgentProvider {
           ...options,
           model: defaultModel,
           _sparkFallbackTried: true,
-        } as AgentOptions);
+        });
       }
 
+      emitProviderEvent('send_error', {
+        errorMessage,
+        requestedModel: requestedModelNorm ?? null,
+        effectiveModel,
+        fallbackAlreadyTried,
+      });
       eventBus.emit('agent:error', { chatId, error: errorMessage, timestamp: Date.now() });
       eventBus.emit('agent:complete', {
         chatId,

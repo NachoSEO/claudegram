@@ -43,6 +43,9 @@ export async function sendLoopToAgent(
     abortController,
     maxIterations = config.MAX_LOOP_ITERATIONS,
     onIterationComplete,
+    onProviderEvent,
+    jobOrigin,
+    platform,
   } = options;
 
   const provider = getProvider();
@@ -75,8 +78,11 @@ IMPORTANT: When you have fully completed this task, respond with the word "DONE"
         onProgress: (text) => {
           onProgress?.(combinedText + text);
         },
+        onProviderEvent,
         abortController,
         model: options.model,
+        jobOrigin,
+        platform,
       });
 
       combinedText += response.text;

@@ -40,11 +40,13 @@ export interface AgentOptions {
   onProgress?: (text: string) => void;
   onToolStart?: (toolName: string, input?: Record<string, unknown>) => void;
   onToolEnd?: () => void;
+  onProviderEvent?: (event: { type: string; data?: Record<string, unknown> }) => void;
   abortController?: AbortController;
   command?: string;
   model?: string;
   platform?: Platform;
   jobOrigin?: JobOrigin;
+  _sparkFallbackTried?: boolean;
 }
 
 export interface LoopOptions extends AgentOptions {

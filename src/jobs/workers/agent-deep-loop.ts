@@ -39,6 +39,10 @@ export const agentDeepLoopJob = (payload: AgentDeepLoopPayload): JobHandler => {
         model: payload.model,
         maxIterations: payload.maxIterations ?? 24,
         abortController: loopAbort,
+        onProviderEvent: (event) => {
+          const safe = JSON.stringify(event.data ?? {});
+          ctx.log('info', `[provider:${event.type}] ${safe}`);
+        },
         onIterationComplete: (iteration, text) => {
           const preview = text.replace(/\s+/g, ' ').slice(0, 240);
           ctx.progress(`iteration-${iteration}`);
