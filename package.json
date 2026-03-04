@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "discord": "tsx watch src/discord-index.ts",
-    "discord:start": "node dist/discord-index.js"
+    "discord:start": "node dist/discord-index.js",
+    "smoke:jobs": "tsx scripts/portable-jobs-smoke.ts"
   },
   "keywords": [
     "telegram",
