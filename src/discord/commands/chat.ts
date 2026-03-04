@@ -12,6 +12,7 @@ import {
   queueRequest,
   setAbortController,
 } from '../../claude/request-queue.js';
+import type { JobOrigin } from '../../providers/types.js';
 import { sendCompactionNotice, sendSessionInitNotice } from '../compaction-notice.js';
 
 /**
@@ -26,6 +27,7 @@ async function streamResponse(
   message: string,
   channel: { send: (...args: any[]) => Promise<any> },
   previousSessionId?: string,
+  jobOrigin?: JobOrigin,
 ): Promise<void> {
   const abortController = new AbortController();
   setAbortController(chatId, abortController);
@@ -43,6 +45,7 @@ async function streamResponse(
       },
       abortController,
       platform: 'discord',
+      jobOrigin,
     });
 
     await discordMessageSender.finishStreaming(channelId, response.text);
@@ -88,8 +91,21 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
     await discordMessageSender.startStreaming(interaction, channelId);
 
     const prevSid = sessionManager.getSession(chatId)?.claudeSessionId;
+    const jobOrigin: JobOrigin = {
+      guildId: interaction.guildId ?? undefined,
+      channelId: interaction.channelId,
+      threadId: interaction.channel?.isThread() ? interaction.channelId : undefined,
+      userId: interaction.user.id,
+    };
     await queueRequest(chatId, message, async () => {
-      await streamResponse(chatId, channelId, message, interaction.channel as { send: (...args: any[]) => Promise<any> }, prevSid);
+      await streamResponse(
+        chatId,
+        channelId,
+        message,
+        interaction.channel as { send: (...args: any[]) => Promise<any> },
+        prevSid,
+        jobOrigin,
+      );
     });
   } else {
     // In a channel — create a thread, stream response there
@@ -116,8 +132,14 @@ export async function handleChat(interaction: ChatInputCommandInteraction): Prom
     await discordMessageSender.startStreamingFromExistingMessage(thinkingMsg, threadChannelId);
 
     const prevSid = sessionManager.getSession(chatId)?.claudeSessionId;
+    const jobOrigin: JobOrigin = {
+      guildId: interaction.guildId ?? undefined,
+      channelId: interaction.channelId,
+      threadId: thread.id,
+      userId: interaction.user.id,
+    };
     await queueRequest(chatId, message, async () => {
-      await streamResponse(chatId, threadChannelId, message, thread, prevSid);
+      await streamResponse(chatId, threadChannelId, message, thread, prevSid, jobOrigin);
     });
   }
 }

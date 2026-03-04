@@ -220,7 +220,7 @@ export class OpenAIProvider implements AgentProvider {
 
       // Run with streaming — no session, local history only
       console.log(`[OpenAI] Starting run() with ${input.length} input items`);
-      const result = await runWithToolContext({ chatId }, async () =>
+      const result = await runWithToolContext({ chatId, origin: options.jobOrigin }, async () =>
         run(agentState.agent, input, {
           stream: true,
           signal: controller.signal,

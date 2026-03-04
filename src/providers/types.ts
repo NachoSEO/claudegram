@@ -6,6 +6,7 @@
  */
 
 export type Platform = 'telegram' | 'discord';
+export type JobOrigin = import('../jobs/core/job-types.js').JobOrigin;
 
 /**
  * OpenAI Agents SDK structured input items.
@@ -43,6 +44,7 @@ export interface AgentOptions {
   command?: string;
   model?: string;
   platform?: Platform;
+  jobOrigin?: JobOrigin;
 }
 
 export interface LoopOptions extends AgentOptions {

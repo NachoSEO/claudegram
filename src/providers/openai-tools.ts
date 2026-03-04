@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { resolveBin } from '../utils/resolve-bin.js';
 import { jobRunner } from '../jobs/index.js';
 import { agentDeepLoopJob } from '../jobs/workers/agent-deep-loop.js';
-import { getCurrentToolChatId } from './openai-tool-context.js';
+import { getCurrentToolChatId, getCurrentToolOrigin } from './openai-tool-context.js';
 
 import type { Tool } from '@openai/agents-core';
 
@@ -698,12 +698,14 @@ function createDelegateDeepTaskTool() {
               : undefined,
         });
 
+        const origin = getCurrentToolOrigin() ?? {
+          channelId: `chat:${chatId}`,
+          userId: `chat:${chatId}`,
+        };
+
         const jobId = jobRunner.enqueue({
           name: 'agent:autonomous-deep-loop',
-          origin: {
-            channelId: `chat:${chatId}`,
-            userId: `chat:${chatId}`,
-          },
+          origin,
           handler,
           timeoutMs: 1000 * 60 * 30,
         });
@@ -744,13 +746,16 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
         const targets: Array<'committed' | 'uncommitted'> =
           selectedTarget === 'all' ? ['committed', 'uncommitted'] : [selectedTarget];
 
+        const toolOrigin = getCurrentToolOrigin();
         const jobIds = targets.map((t) =>
           jobRunner.enqueue({
             name: 'coderabbit-review',
-            origin: {
-              channelId: 'agent:tool',
-              userId: 'agent:tool',
-            },
+            origin:
+              toolOrigin ??
+              {
+                channelId: 'agent:tool',
+                userId: 'agent:tool',
+              },
             handler: async (ctx) =>
               coderabbitReview({
                 id: ctx.jobId,
@@ -818,12 +823,14 @@ function createDelegateCodexHighReviewTool() {
               : undefined,
         });
 
+        const origin = getCurrentToolOrigin() ?? {
+          channelId: `chat:${chatId}`,
+          userId: `chat:${chatId}`,
+        };
+
         const jobId = jobRunner.enqueue({
           name: 'agent:codex-high-review',
-          origin: {
-            channelId: `chat:${chatId}`,
-            userId: `chat:${chatId}`,
-          },
+          origin,
           handler,
           timeoutMs: 1000 * 60 * 30,
         });
