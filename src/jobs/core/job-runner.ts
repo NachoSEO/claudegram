@@ -54,6 +54,22 @@ export class JobRunner {
     return this.registry.get(jobId);
   }
 
+  listRecent(limit = 10) {
+    return this.registry.listRecent(limit);
+  }
+
+  isRunning(jobId: string): boolean {
+    return this.running?.jobId === jobId;
+  }
+
+  queueDepth(): number {
+    return this.queue.length;
+  }
+
+  runningJobId(): string | null {
+    return this.running?.jobId ?? null;
+  }
+
   cancel(jobId: string): boolean {
     // cancel queued
     const idx = this.queue.findIndex((q) => q.jobId === jobId);

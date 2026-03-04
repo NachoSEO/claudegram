@@ -48,14 +48,65 @@ export const devopsSlash = new SlashCommandBuilder()
       .addStringOption((opt) => opt.setName('task').setDescription('Deep task prompt').setRequired(true))
       .addStringOption((opt) => opt.setName('model').setDescription('Optional model override').setRequired(false)),
   )
-  .addSubcommand((sub) => sub.setName('status').setDescription('Show last job status (coming soon)'));
+  .addSubcommand((sub) =>
+    sub
+      .setName('status')
+      .setDescription('Show background job status')
+      .addStringOption((opt) => opt.setName('job_id').setDescription('Optional job ID').setRequired(false)),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('cancel')
+      .setDescription('Cancel a queued/running background job')
+      .addStringOption((opt) => opt.setName('job_id').setDescription('Job ID to cancel').setRequired(true)),
+  );
 
 export async function devopsCommand(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommand();
 
   if (sub === 'status') {
+    const jobId = interaction.options.getString('job_id', false) ?? undefined;
+    if (jobId) {
+      const j = jobRunner.get(jobId);
+      if (!j) {
+        await interaction.reply({ content: `Job not found: \`${jobId}\``, ephemeral: true });
+        return;
+      }
+      const durationMs = (j.endedAt ?? Date.now()) - (j.startedAt ?? j.createdAt);
+      const recentLogs = j.logs.slice(-8).map((l) => `- ${new Date(l.at).toISOString()} [${l.level}] ${l.message.slice(0, 180)}`);
+      await interaction.reply({
+        content: [
+          `**Job \`${j.jobId}\`**`,
+          `- **Name**: ${j.name}`,
+          `- **State**: ${j.state}`,
+          `- **Duration**: ${Math.round(durationMs / 1000)}s`,
+          `- **Exit Code**: ${j.exitCode ?? 'n/a'}`,
+          j.error ? `- **Error**: \`${j.error.slice(0, 300)}\`` : null,
+          recentLogs.length ? `\n**Recent Logs**\n${recentLogs.join('\n')}` : null,
+        ].filter(Boolean).join('\n'),
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const recent = jobRunner.listRecent(8);
+    if (!recent.length) {
+      await interaction.reply({ content: 'No recent jobs found.', ephemeral: true });
+      return;
+    }
+    const lines = recent.map((j) => {
+      const durationMs = (j.endedAt ?? Date.now()) - (j.startedAt ?? j.createdAt);
+      return `- \`${j.jobId}\` • **${j.name}** • ${j.state} • ${Math.round(durationMs / 1000)}s`;
+    });
+    await interaction.reply({ content: `**Recent Jobs**\n${lines.join('\n')}`, ephemeral: true });
+    return;
+  }
+
+  if (sub === 'cancel') {
+    const jobId = interaction.options.getString('job_id', true);
+    const ok = jobRunner.cancel(jobId);
     await interaction.reply({
-      content: 'Use /devops run with one of: build, self-check, self-update, restart-discord-service, full-self-refresh, agent-loop-30m — or /devops deep task:<prompt>',
+      content: ok ? `Cancel requested for job \`${jobId}\`.` : `Unable to cancel job \`${jobId}\` (not queued/running).`,
       ephemeral: true,
     });
     return;

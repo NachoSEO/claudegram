@@ -4,6 +4,7 @@ import { sessionManager } from '../../claude/session-manager.js';
 import { getModel, getCachedUsage, isDangerousMode } from '../../claude/agent.js';
 import { isProcessing } from '../../claude/request-queue.js';
 import { config } from '../../config.js';
+import { jobRunner } from '../../jobs/index.js';
 
 /**
  * Sends a concise status summary of the bot and the user's current session to the invoking Discord interaction.
@@ -24,6 +25,9 @@ export async function handleStatus(interaction: ChatInputCommandInteraction): Pr
   const usage = getCachedUsage(chatId);
 
   const lines: string[] = ['**Bot Status**\n'];
+  const recentJobs = jobRunner.listRecent(5);
+  const running = recentJobs.filter(j => j.state === 'running').length;
+  const queued = recentJobs.filter(j => j.state === 'queued').length;
 
   if (session) {
     lines.push(`**Project:** \`${session.workingDirectory}\``);
@@ -31,6 +35,7 @@ export async function handleStatus(interaction: ChatInputCommandInteraction): Pr
     lines.push(`**Model:** ${model}`);
     lines.push(`**Processing:** ${processing ? 'Yes' : 'No'}`);
     lines.push(`**Dangerous Mode:** ${dangerous ? 'ENABLED' : 'Disabled'}`);
+    lines.push(`**Jobs (recent):** running ${running} · queued ${queued} · total ${recentJobs.length}`);
 
     if (session.claudeSessionId) {
       lines.push(`**Session ID:** \`${session.claudeSessionId}\``);

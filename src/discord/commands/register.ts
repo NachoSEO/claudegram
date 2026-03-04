@@ -264,7 +264,21 @@ const commands = [
     )
     .addSubcommand(sub =>
       sub.setName('status')
-        .setDescription('Show last job status')
+        .setDescription('Show background job status')
+        .addStringOption(opt =>
+          opt.setName('job_id')
+            .setDescription('Optional job ID')
+            .setRequired(false)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName('cancel')
+        .setDescription('Cancel a queued/running background job')
+        .addStringOption(opt =>
+          opt.setName('job_id')
+            .setDescription('Job ID to cancel')
+            .setRequired(true)
+        )
     ),
   new ContextMenuCommandBuilder()
     .setName('Ask Claude')
