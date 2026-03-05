@@ -20,6 +20,7 @@ import { z } from 'zod';
 
 import { resolveBin } from '../utils/resolve-bin.js';
 import { jobRunner } from '../jobs/index.js';
+import { getApprovalDecision } from '../jobs/core/approval-policy.js';
 import { agentDeepLoopJob } from '../jobs/workers/agent-deep-loop.js';
 import { getCurrentToolChatId, getCurrentToolOrigin } from './openai-tool-context.js';
 
@@ -716,11 +717,18 @@ function createDelegateDeepTaskTool() {
           max_iterations: max_iterations ?? null,
         });
 
+        const timeoutMs = 1000 * 60 * 30;
+        const jobName = 'agent:autonomous-deep-loop';
+        const decision = getApprovalDecision(jobName, timeoutMs);
+        if (decision.requiresApproval) {
+          return `[error] ${jobName} requires approval (${decision.reason}). Run via /devops for approval flow.`;
+        }
+
         const jobId = jobRunner.enqueue({
-          name: 'agent:autonomous-deep-loop',
+          name: jobName,
           origin,
           handler,
-          timeoutMs: 1000 * 60 * 30,
+          timeoutMs,
           idempotencyKey,
         });
 
@@ -772,8 +780,14 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
             target: t,
             promptOnly: true,
           });
+          const timeoutMs = 1000 * 60 * 20;
+          const jobName = 'coderabbit-review';
+          const decision = getApprovalDecision(jobName, timeoutMs);
+          if (decision.requiresApproval) {
+            throw new Error(`${jobName} requires approval (${decision.reason}). Run via /devops for approval flow.`);
+          }
           return jobRunner.enqueue({
-            name: 'coderabbit-review',
+            name: jobName,
             origin: toolOrigin,
             handler: async (ctx) =>
               coderabbitReview({
@@ -787,7 +801,7 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
                 state: 'running',
                 createdAt: Date.now(),
               } as any),
-            timeoutMs: 1000 * 60 * 20,
+            timeoutMs,
             idempotencyKey,
           });
         });
@@ -855,11 +869,18 @@ function createDelegateCodexHighReviewTool() {
           max_iterations: max_iterations ?? null,
         });
 
+        const timeoutMs = 1000 * 60 * 30;
+        const jobName = 'agent:codex-high-review';
+        const decision = getApprovalDecision(jobName, timeoutMs);
+        if (decision.requiresApproval) {
+          return `[error] ${jobName} requires approval (${decision.reason}). Run via /devops for approval flow.`;
+        }
+
         const jobId = jobRunner.enqueue({
-          name: 'agent:codex-high-review',
+          name: jobName,
           origin,
           handler,
-          timeoutMs: 1000 * 60 * 30,
+          timeoutMs,
           idempotencyKey,
         });
 
