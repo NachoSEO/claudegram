@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { resolveBin } from '../utils/resolve-bin.js';
 import { jobRunner } from '../jobs/index.js';
 import { getApprovalDecision } from '../jobs/core/approval-policy.js';
+import { config } from '../config.js';
 import { agentDeepLoopJob } from '../jobs/workers/agent-deep-loop.js';
 import { getCurrentToolChatId, getCurrentToolOrigin } from './openai-tool-context.js';
 
@@ -46,6 +47,19 @@ type PatchOperationResult = {
   output: string;
 };
 
+
+
+function resolveDelegateOrigin(chatId: number | undefined, origin: ReturnType<typeof getCurrentToolOrigin>): { origin?: { channelId: string; userId: string; threadId?: string }; error?: string } {
+  if (origin?.channelId && origin?.userId) return { origin };
+  if (!config.JOB_ALLOW_HEADLESS_ORIGIN) {
+    return { error: 'missing discord job origin' };
+  }
+  if (typeof chatId !== 'number') {
+    return { error: 'missing chat context for headless origin' };
+  }
+  const synthetic = { channelId: 'chat:' + chatId, userId: 'chat:' + chatId };
+  return { origin: synthetic };
+}
 // ---------------------------------------------------------------------------
 //  Path validation
 // ---------------------------------------------------------------------------
@@ -705,10 +719,11 @@ function createDelegateDeepTaskTool() {
               : undefined,
         });
 
-        const origin = getCurrentToolOrigin();
-        if (!origin?.channelId || !origin?.userId) {
-          return '[error] delegate_deep_task unavailable: missing discord job origin';
+        const originResolved = resolveDelegateOrigin(chatId, getCurrentToolOrigin());
+        if (!originResolved.origin) {
+          return '[error] delegate_deep_task unavailable: ' + (originResolved.error ?? 'missing origin');
         }
+        const origin = originResolved.origin;
 
         const idempotencyKey = makeIdempotencyKey('agent:autonomous-deep-loop', origin, {
           chatId,
@@ -768,10 +783,12 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
         const targets: Array<'committed' | 'uncommitted'> =
           selectedTarget === 'all' ? ['committed', 'uncommitted'] : [selectedTarget];
 
-        const toolOrigin = getCurrentToolOrigin();
-        if (!toolOrigin?.channelId || !toolOrigin?.userId) {
-          return '[error] delegate_coderabbit_review unavailable: missing discord job origin';
+        const chatId = getCurrentToolChatId();
+        const toolOriginResolved = resolveDelegateOrigin(chatId, getCurrentToolOrigin());
+        if (!toolOriginResolved.origin) {
+          return '[error] delegate_coderabbit_review unavailable: ' + (toolOriginResolved.error ?? 'missing origin');
         }
+        const toolOrigin = toolOriginResolved.origin;
 
         const jobIds = targets.map((t) => {
           const idempotencyKey = makeIdempotencyKey('coderabbit-review', toolOrigin, {
@@ -857,10 +874,11 @@ function createDelegateCodexHighReviewTool() {
               : undefined,
         });
 
-        const origin = getCurrentToolOrigin();
-        if (!origin?.channelId || !origin?.userId) {
-          return '[error] delegate_codex_high_review unavailable: missing discord job origin';
+        const originResolved = resolveDelegateOrigin(chatId, getCurrentToolOrigin());
+        if (!originResolved.origin) {
+          return '[error] delegate_codex_high_review unavailable: ' + (originResolved.error ?? 'missing origin');
         }
+        const origin = originResolved.origin;
 
         const idempotencyKey = makeIdempotencyKey('agent:codex-high-review', origin, {
           chatId,
