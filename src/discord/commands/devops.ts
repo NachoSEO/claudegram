@@ -18,6 +18,7 @@ import { postJobStarted } from '../jobs/job-notifier.js';
 import { approvalManager } from '../approvals/index.js';
 import { getApprovalDecision } from '../../jobs/core/approval-policy.js';
 import { jobNotificationOutbox } from '../jobs/job-notification-outbox.js';
+import { delegatedSessionId, discordSessionId } from '../id-mapper.js';
 
 function repoPathFromEnvOrCwd() {
   return process.env.CLAUDEGRAM_REPO_PATH || process.cwd();
@@ -82,37 +83,42 @@ export async function devopsCommand(interaction: ChatInputCommandInteraction) {
     if (jobId) {
       const j = jobRunner.get(jobId);
       if (!j) {
-        await interaction.reply({ content: `Job not found: \`${jobId}\``, ephemeral: true });
+        await interaction.reply({ content: `Job not found: \`${jobId}\``, flags: 64 });
         return;
       }
       const durationMs = (j.endedAt ?? Date.now()) - (j.startedAt ?? j.createdAt);
       const recentLogs = j.logs.slice(-8).map((l) => `- ${new Date(l.at).toISOString()} [${l.level}] ${l.message.slice(0, 180)}`);
       const failedOutbox = jobNotificationOutbox.getFailed();
-      await interaction.reply({
-        content: [
-          `**Job \`${j.jobId}\`**`,
-          `- **Name**: ${j.name}`,
-          `- **State**: ${j.state}`,
-          `- **Duration**: ${Math.round(durationMs / 1000)}s`,
-          `- **Exit Code**: ${j.exitCode ?? 'n/a'}`,
-          j.error ? `- **Error**: \`${j.error.slice(0, 300)}\`` : null,
+        await interaction.reply({
+          content: [
+            `**Job \`${j.jobId}\`**`,
+            `- **Name**: ${j.name}`,
+            `- **State**: ${j.state}`,
+            `- **Parent Job**: ${j.parentJobId ?? 'none'}`,
+            `- **Root Job**: ${j.rootJobId}`,
+            `- **Child Jobs**: ${j.childJobIds.length}`,
+            `- **Duration**: ${Math.round(durationMs / 1000)}s`,
+            `- **Exit Code**: ${j.exitCode ?? 'n/a'}`,
+            j.error ? `- **Error**: \`${j.error.slice(0, 300)}\`` : null,
           failedOutbox.length ? `- **Notification Outbox Failed**: ${failedOutbox.length}` : null,
           recentLogs.length ? `\n**Recent Logs**\n${recentLogs.join('\n')}` : null,
         ].filter(Boolean).join('\n'),
-        ephemeral: true,
+        flags: 64,
       });
       return;
     }
 
     const recent = jobRunner.listRecent(8);
     if (!recent.length) {
-      await interaction.reply({ content: 'No recent jobs found.', ephemeral: true });
+      await interaction.reply({ content: 'No recent jobs found.', flags: 64 });
       return;
     }
-    const lines = recent.map((j) => {
-      const durationMs = (j.endedAt ?? Date.now()) - (j.startedAt ?? j.createdAt);
-      return `- \`${j.jobId}\` • **${j.name}** • ${j.state} • ${Math.round(durationMs / 1000)}s`;
-    });
+      const lines = recent.map((j) => {
+        const durationMs = (j.endedAt ?? Date.now()) - (j.startedAt ?? j.createdAt);
+        const lineage = j.parentJobId ? ` • parent:\`${j.parentJobId.slice(0, 8)}\`` : '';
+        const children = j.childJobIds.length ? ` • children:${j.childJobIds.length}` : '';
+        return `- \`${j.jobId}\` • **${j.name}** • ${j.state} • ${Math.round(durationMs / 1000)}s${lineage}${children}`;
+      });
     const m = jobRunner.getMetrics();
     const failedOutbox = jobNotificationOutbox.getFailed();
     const degradedFlags: string[] = [];
@@ -127,7 +133,7 @@ export async function devopsCommand(interaction: ChatInputCommandInteraction) {
       degradedFlags.length ? `- degraded: ${degradedFlags.join(', ')}` : '- degraded: none',
     ].join('\n');
 
-    await interaction.reply({ content: `**Recent Jobs**\n${lines.join('\n')}\n\n${metricsBlock}`, ephemeral: true });
+    await interaction.reply({ content: `**Recent Jobs**\n${lines.join('\n')}\n\n${metricsBlock}`, flags: 64 });
     return;
   }
 
@@ -136,7 +142,7 @@ export async function devopsCommand(interaction: ChatInputCommandInteraction) {
     const ok = jobRunner.cancel(jobId);
     await interaction.reply({
       content: ok ? `Cancel requested for job \`${jobId}\`.` : `Unable to cancel job \`${jobId}\` (not queued/running).`,
-      ephemeral: true,
+      flags: 64,
     });
     return;
   }
@@ -159,7 +165,7 @@ export async function devopsCommand(interaction: ChatInputCommandInteraction) {
     'agent-loop-30m',
   ]);
   if (!known.has(jobName)) {
-    await interaction.reply({ content: `Unknown job: ${jobName}`, ephemeral: true });
+    await interaction.reply({ content: `Unknown job: ${jobName}`, flags: 64 });
     return;
   }
 
@@ -177,16 +183,20 @@ export async function devopsCommand(interaction: ChatInputCommandInteraction) {
     handler = restartDiscordServiceJob();
   } else if (jobName === 'full-self-refresh') {
     handler = fullSelfRefreshJob(repoPath);
-  } else {
-    const payload: AgentDeepLoopPayload = {
-      userId: interaction.user.id,
-      task:
-        deepTask ||
-        'Run a 30 minute deep implementation/research loop and return a concise report with findings, diffs, and next actions.',
-      model: deepModel,
-    };
-    handler = agentDeepLoopJob(payload);
-  }
+    } else {
+      const parentChatId = discordSessionId(interaction.user.id, interaction.channelId);
+      const childChatId = delegatedSessionId(`${parentChatId}:${jobName}:${Date.now()}`);
+      const payload: AgentDeepLoopPayload = {
+        userId: interaction.user.id,
+        parentChatId,
+        childChatId,
+        task:
+          deepTask ||
+          'Run a 30 minute deep implementation/research loop and return a concise report with findings, diffs, and next actions.',
+        model: deepModel || 'gpt-5.3-codex-spark',
+      };
+      handler = agentDeepLoopJob(payload);
+    }
 
   const origin = {
     guildId: interaction.guildId ?? undefined,
@@ -208,14 +218,14 @@ export async function devopsCommand(interaction: ChatInputCommandInteraction) {
     });
 
     await interaction.reply({
-      ephemeral: true,
+      flags: 64,
       content: `Approval required for **${fullJobName}**.\n${decision.reason}`,
       components: [approvalManager.renderButtons(approval.id)],
     });
 
     const decided = await approvalManager.awaitDecision(approval.id);
     if (decided.state !== 'approved') {
-      await interaction.followUp({ ephemeral: true, content: `Job not queued. Approval state: **${decided.state}**.` });
+      await interaction.followUp({ flags: 64, content: `Job not queued. Approval state: **${decided.state}**.` });
       return;
     }
   }
@@ -228,6 +238,7 @@ export async function devopsCommand(interaction: ChatInputCommandInteraction) {
 
   const jobId = jobRunner.enqueue({
     name: fullJobName,
+    lane: jobName === 'agent-loop-30m' ? 'subagent' : 'maintenance',
     origin,
     handler,
     timeoutMs,

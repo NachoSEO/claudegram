@@ -2,10 +2,13 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled
 
 export type JobLogLevel = 'info' | 'warn' | 'error';
 
+export type JobLane = 'main' | 'subagent' | 'review' | 'maintenance';
+
 export type JobEvent =
-  | { type: 'job:queued'; jobId: string; name: string; at: number }
+  | { type: 'job:queued'; jobId: string; name: string; at: number; lane?: JobLane; parentJobId?: string; rootJobId?: string }
+  | { type: 'job:origin'; jobId: string; origin: JobOrigin; at: number }
   | { type: 'job:idempotency'; jobId: string; key: string; at: number }
-  | { type: 'job:start'; jobId: string; at: number }
+  | { type: 'job:start'; jobId: string; at: number; lane?: JobLane }
   | { type: 'job:progress'; jobId: string; message: string; at: number }
   | { type: 'job:log'; jobId: string; level: JobLogLevel; message: string; at: number }
   | { type: 'job:result'; jobId: string; summary?: string; artifacts?: string[]; at: number }
@@ -24,6 +27,10 @@ export type JobSnapshot = {
   jobId: string;
   name: string;
   createdAt: number;
+  lane: JobLane;
+  parentJobId?: string;
+  rootJobId: string;
+  childJobIds: string[];
   idempotencyKey?: string;
   startedAt?: number;
   endedAt?: number;
@@ -39,6 +46,10 @@ export type JobSnapshot = {
 
 export type JobRunContext = {
   jobId: string;
+  lane: JobLane;
+  parentJobId?: string;
+  rootJobId: string;
+  origin: JobOrigin;
   signal: AbortSignal;
   progress: (message: string) => void;
   log: (level: JobLogLevel, message: string) => void;

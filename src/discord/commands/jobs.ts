@@ -9,19 +9,25 @@ export async function handleJobs(interaction: ChatInputCommandInteraction): Prom
   const filtered = state ? recent.filter((j) => j.state === state) : recent;
 
   if (!filtered.length) {
-    await interaction.reply({ content: 'No jobs found for that filter.', ephemeral: true });
+    await interaction.reply({ content: 'No jobs found for that filter.', flags: 64 });
     return;
   }
 
   const lines = filtered.map((j) => {
     const runtimeMs = (j.endedAt ?? Date.now()) - (j.startedAt ?? j.createdAt);
-    const where = j.origin.threadId ? `thread:${j.origin.threadId}` : `channel:${j.origin.channelId}`;
+    const where = j.origin?.threadId
+      ? `thread:${j.origin.threadId}`
+      : j.origin?.channelId
+        ? `channel:${j.origin.channelId}`
+        : 'route:unknown';
     const summary = j.resultSummary ? ` • ${j.resultSummary.slice(0, 90)}` : '';
-    return `- \`${j.jobId}\` • **${j.name}** • ${j.state} • ${Math.round(runtimeMs / 1000)}s • ${where}${summary}`;
+    const lineage = j.parentJobId ? ` • parent:\`${j.parentJobId.slice(0, 8)}\`` : '';
+    const children = j.childJobIds.length ? ` • children:${j.childJobIds.length}` : '';
+    return `- \`${j.jobId}\` • **${j.name}** • lane:${j.lane} • ${j.state} • ${Math.round(runtimeMs / 1000)}s • ${where}${lineage}${children}${summary}`;
   });
 
   await interaction.reply({
-    ephemeral: true,
+    flags: 64,
     content: [`**Jobs**${state ? ` (state: ${state})` : ''}`, ...lines].join('\n'),
   });
 }

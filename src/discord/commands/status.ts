@@ -1,5 +1,5 @@
 import { ChatInputCommandInteraction } from 'discord.js';
-import { discordChatId } from '../id-mapper.js';
+import { discordChatId, discordSessionId } from '../id-mapper.js';
 import { sessionManager } from '../../claude/session-manager.js';
 import { getModel, getCachedUsage, isDangerousMode } from '../../claude/agent.js';
 import { isProcessing } from '../../claude/request-queue.js';
@@ -16,7 +16,7 @@ import { jobRunner } from '../../jobs/index.js';
  * @param interaction - The Discord ChatInputCommandInteraction that triggered the status command
  */
 export async function handleStatus(interaction: ChatInputCommandInteraction): Promise<void> {
-  const chatId = discordChatId(interaction.user.id);
+  const chatId = discordSessionId(interaction.user.id, interaction.channelId);
 
   const session = sessionManager.getSession(chatId);
   const model = getModel(chatId);
@@ -25,17 +25,19 @@ export async function handleStatus(interaction: ChatInputCommandInteraction): Pr
   const usage = getCachedUsage(chatId);
 
   const lines: string[] = ['**Bot Status**\n'];
-  const recentJobs = jobRunner.listRecent(5);
-  const running = recentJobs.filter(j => j.state === 'running').length;
-  const queued = recentJobs.filter(j => j.state === 'queued').length;
+    const recentJobs = jobRunner.listRecent(5);
+    const running = recentJobs.filter(j => j.state === 'running').length;
+    const queued = recentJobs.filter(j => j.state === 'queued').length;
+    const lanes = Array.from(new Set(recentJobs.map((j) => j.lane))).join(', ');
 
   if (session) {
     lines.push(`**Project:** \`${session.workingDirectory}\``);
     lines.push(`**Provider:** ${config.AGENT_PROVIDER}`);
     lines.push(`**Model:** ${model}`);
-    lines.push(`**Processing:** ${processing ? 'Yes' : 'No'}`);
-    lines.push(`**Dangerous Mode:** ${dangerous ? 'ENABLED' : 'Disabled'}`);
-    lines.push(`**Jobs (recent):** running ${running} · queued ${queued} · total ${recentJobs.length}`);
+      lines.push(`**Processing:** ${processing ? 'Yes' : 'No'}`);
+      lines.push(`**Dangerous Mode:** ${dangerous ? 'ENABLED' : 'Disabled'}`);
+      lines.push(`**Jobs (recent):** running ${running} · queued ${queued} · total ${recentJobs.length}`);
+      if (lanes) lines.push(`**Job Lanes:** ${lanes}`);
 
     if (session.claudeSessionId) {
       lines.push(`**Session ID:** \`${session.claudeSessionId}\``);
@@ -53,5 +55,5 @@ export async function handleStatus(interaction: ChatInputCommandInteraction): Pr
     lines.push('No active session. Use `/project <path>` to start.');
   }
 
-  await interaction.reply({ content: lines.join('\n'), ephemeral: true });
+  await interaction.reply({ content: lines.join('\n'), flags: 64 });
 }

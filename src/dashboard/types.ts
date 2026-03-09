@@ -1,3 +1,5 @@
+import type { JobEvent } from '../jobs/core/job-types.js';
+
 // ── Dashboard shared types ───────────────────────────────────────────
 
 // Agent identifiers
@@ -149,6 +151,15 @@ export interface QueueProcessingEvent {
   timestamp: number;
 }
 
+type JobQueuedEvent = Extract<JobEvent, { type: 'job:queued' }>;
+type JobOriginEvent = Extract<JobEvent, { type: 'job:origin' }>;
+type JobIdempotencyEvent = Extract<JobEvent, { type: 'job:idempotency' }>;
+type JobStartEvent = Extract<JobEvent, { type: 'job:start' }>;
+type JobProgressEvent = Extract<JobEvent, { type: 'job:progress' }>;
+type JobLogEvent = Extract<JobEvent, { type: 'job:log' }>;
+type JobResultEvent = Extract<JobEvent, { type: 'job:result' }>;
+type JobEndEvent = Extract<JobEvent, { type: 'job:end' }>;
+
 // ── Event map ────────────────────────────────────────────────────────
 
 export interface DashboardEventMap {
@@ -173,9 +184,18 @@ export interface DashboardEventMap {
   'session:update': SessionUpdateEvent;
   'session:clear': SessionClearEvent;
 
-  'queue:enqueue': QueueEnqueueEvent;
-  'queue:dequeue': QueueDequeueEvent;
-  'queue:processing': QueueProcessingEvent;
+    'queue:enqueue': QueueEnqueueEvent;
+    'queue:dequeue': QueueDequeueEvent;
+    'queue:processing': QueueProcessingEvent;
+
+  'job:queued': JobQueuedEvent;
+  'job:origin': JobOriginEvent;
+  'job:idempotency': JobIdempotencyEvent;
+  'job:start': JobStartEvent;
+  'job:progress': JobProgressEvent;
+  'job:log': JobLogEvent;
+  'job:result': JobResultEvent;
+  'job:end': JobEndEvent;
 }
 
 export type DashboardEventType = keyof DashboardEventMap;

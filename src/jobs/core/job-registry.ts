@@ -40,17 +40,30 @@ export class JobRegistry {
         jobId: ev.jobId,
         name: ev.name,
         createdAt: now,
+        lane: ev.lane ?? 'main',
+        parentJobId: ev.parentJobId,
+        rootJobId: ev.rootJobId ?? ev.parentJobId ?? ev.jobId,
+        childJobIds: [],
         state: 'queued',
         origin: (null as any),
         logs: [],
       };
       this.jobs.set(ev.jobId, snap);
+      if (ev.parentJobId) {
+        const parent = this.jobs.get(ev.parentJobId);
+        if (parent && !parent.childJobIds.includes(ev.jobId)) {
+          parent.childJobIds.push(ev.jobId);
+        }
+      }
       if (shouldPersist) this.persist(ev);
       if (shouldSweep) this.sweep();
       return;
     }
 
     switch (ev.type) {
+      case 'job:origin':
+        existing.origin = ev.origin;
+        break;
       case 'job:idempotency':
         existing.idempotencyKey = ev.key;
         break;
@@ -87,9 +100,7 @@ export class JobRegistry {
   }
 
   setOrigin(jobId: string, origin: JobSnapshot['origin']) {
-    const j = this.jobs.get(jobId);
-    if (!j) throw new Error(`unknown job ${jobId}`);
-    j.origin = origin;
+    this.apply({ type: 'job:origin', jobId, origin, at: Date.now() });
   }
 
   setError(jobId: string, error: string) {
@@ -120,21 +131,7 @@ export class JobRegistry {
     for (const line of lines) {
       try {
         const ev = JSON.parse(line) as JobEvent;
-        if (ev.type === 'job:queued') {
-          const snap: JobSnapshot = {
-            jobId: ev.jobId,
-            name: ev.name,
-            createdAt: ev.at,
-            state: 'queued',
-            origin: (null as any),
-            logs: [],
-          };
-          this.jobs.set(ev.jobId, snap);
-        } else {
-          const ex = this.jobs.get(ev.jobId);
-          if (!ex) continue;
-          this.apply(ev, { persist: false, sweep: false });
-        }
+        this.apply(ev, { persist: false, sweep: false });
       } catch {
         // ignore malformed line
       }

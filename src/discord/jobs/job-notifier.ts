@@ -14,6 +14,30 @@ function fmtState(s: JobSnapshot['state']) {
   return '📥 queued';
 }
 
+function renderCompletionAnnouncement(snap: JobSnapshot): string {
+  const lines = [
+    `## Child agent ${fmtState(snap.state)}`,
+    `- **Job**: \`${snap.jobId}\``,
+    `- **Name**: ${snap.name}`,
+    `- **Lane**: ${snap.lane}`,
+  ];
+
+  if (snap.parentJobId) {
+    lines.push(`- **Parent Job**: \`${snap.parentJobId}\``);
+  }
+  if (snap.resultSummary) {
+    lines.push('', '### Result', snap.resultSummary);
+  }
+  if (snap.artifacts?.length) {
+    lines.push('', '### Metadata', ...snap.artifacts.map((item) => `- ${item}`));
+  }
+  if (snap.error) {
+    lines.push('', '### Error', `\`\`\`\n${String(snap.error).slice(0, 1800)}\n\`\`\``);
+  }
+
+  return lines.join('\n');
+}
+
 export function jobActionRow(jobId: string, canCancel: boolean, canRetry = false, canShowResult = false) {
   const row = new ActionRowBuilder<ButtonBuilder>();
   row.addComponents(
@@ -51,7 +75,9 @@ export async function postJobStarted(interaction: ChatInputCommandInteraction, j
     const replyId = reply && typeof (reply as any).id === 'string' ? String((reply as any).id) : null;
     if (replyId) {
       const s = jobRunner.get(jobId);
-      if (s) s.origin.statusMessageId = replyId;
+      if (s?.origin) {
+        jobRunner.updateOrigin(jobId, { ...s.origin, statusMessageId: replyId });
+      }
     }
   } catch {
     // non-fatal: status message can still be tracked via /jobs and /devops status
@@ -120,13 +146,27 @@ export function attachJobNotifier(client: any) {
   // Flush any persisted pending notifications after restart
   scheduleDeferredDispatch();
 
-  jobRunner.onEvent(async (ev: JobEvent) => {
-    const snap = jobRunner.get(ev.jobId);
+    jobRunner.onEvent(async (ev: JobEvent) => {
+      const snap = jobRunner.get(ev.jobId);
 
-    if (ev.type === 'job:end' && snap) {
-      jobNotificationOutbox.enqueueFromSnapshot(snap);
-      scheduleDeferredDispatch();
-    }
+      if (ev.type === 'job:end' && snap) {
+        if (snap.parentJobId) {
+          try {
+            const ch = await client.channels.fetch(snap.origin.threadId ?? snap.origin.channelId);
+            if (ch && 'send' in ch) {
+              const chunks = splitDiscordMessage(renderCompletionAnnouncement(snap), 1800);
+              for (const chunk of chunks) {
+                await (ch as any).send({ content: chunk });
+              }
+              return;
+            }
+          } catch {
+            // Fall back to outbox delivery below if direct announce fails.
+          }
+        }
+        jobNotificationOutbox.enqueueFromSnapshot(snap);
+        scheduleDeferredDispatch();
+      }
 
     if (!snap?.origin?.channelId || !snap.origin.statusMessageId) return;
 
@@ -162,23 +202,23 @@ export async function handleJobButton(i: ButtonInteraction) {
   const action = parts[1];
   const jobId = parts[2];
   if (!action || !jobId) {
-    return i.reply({ ephemeral: true, content: 'Invalid job action payload.' });
+    return i.reply({ flags: 64, content: 'Invalid job action payload.' });
   }
 
   const snap = jobRunner.get(jobId);
-  if (!snap) return i.reply({ ephemeral: true, content: `Unknown job: ${jobId}` });
+  if (!snap) return i.reply({ flags: 64, content: `Unknown job: ${jobId}` });
 
   if (action === 'cancel') {
     jobRunner.cancel(jobId);
-    return i.reply({ ephemeral: true, content: `Cancel requested for job \`${jobId}\`.` });
+    return i.reply({ flags: 64, content: `Cancel requested for job \`${jobId}\`.` });
   }
 
   if (action === 'logs') {
     const lines = snap.logs.map((l) => `[${new Date(l.at).toISOString()}] ${l.level.toUpperCase()}: ${l.message}`);
     const out = lines.length ? lines.join('\n') : '(no logs)';
     const chunks = splitDiscordMessage(out, 1800);
-    await i.reply({ ephemeral: true, content: `Logs for \`${jobId}\` (${snap.name})` });
-    for (const c of chunks) await i.followUp({ ephemeral: true, content: '```\n' + c + '\n```' });
+    await i.reply({ flags: 64, content: `Logs for \`${jobId}\` (${snap.name})` });
+    for (const c of chunks) await i.followUp({ flags: 64, content: '```\n' + c + '\n```' });
     return;
   }
 
@@ -191,17 +231,17 @@ export async function handleJobButton(i: ButtonInteraction) {
     }
     if (!parts.length) parts.push('No structured result artifact available.');
     const chunks = splitDiscordMessage(parts.join('\n'), 1800);
-    await i.reply({ ephemeral: true, content: chunks[0] });
-    for (const c of chunks.slice(1)) await i.followUp({ ephemeral: true, content: c });
+    await i.reply({ flags: 64, content: chunks[0] });
+    for (const c of chunks.slice(1)) await i.followUp({ flags: 64, content: c });
     return;
   }
 
   if (action === 'retry') {
     const nextId = jobRunner.retry(jobId);
-    if (!nextId) return i.reply({ ephemeral: true, content: `Retry unavailable for job \`${jobId}\`.` });
+    if (!nextId) return i.reply({ flags: 64, content: `Retry unavailable for job \`${jobId}\`.` });
     const next = jobRunner.get(nextId);
     return i.reply({
-      ephemeral: true,
+      flags: 64,
       content: `Retry queued: \`${nextId}\` for **${next?.name ?? 'job'}**.`,
       components: [jobActionRow(nextId, true, false, false)],
     });

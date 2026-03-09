@@ -1,27 +1,34 @@
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
-import { JobEvent, JobHandler, JobOrigin, JobRunContext } from './job-types';
+import { JobEvent, JobHandler, JobLane, JobOrigin, JobRunContext } from './job-types';
 import { JobRegistry } from './job-registry';
 
 type EnqueueOpts = {
   name: string;
+  lane?: JobLane;
   origin: JobOrigin;
   handler: JobHandler;
   timeoutMs?: number;
   stallTimeoutMs?: number;
   idempotencyKey?: string;
+  parentJobId?: string;
+  rootJobId?: string;
 };
 
 type RetrySpec = {
   name: string;
+  lane: JobLane;
   origin: JobOrigin;
   handler: JobHandler;
   timeoutMs?: number;
   stallTimeoutMs?: number;
+  parentJobId?: string;
+  rootJobId?: string;
 };
 
 type Running = {
   jobId: string;
+  lane: JobLane;
   abort: AbortController;
   timeout?: NodeJS.Timeout;
   stallWatchdog?: NodeJS.Timeout;
@@ -47,7 +54,7 @@ type JobMetricsSnapshot = {
 export class JobRunner {
   private registry: JobRegistry;
   private emitter = new EventEmitter();
-  private queue: Array<EnqueueOpts & { jobId: string; createdAt: number }> = [];
+  private queues = new Map<JobLane, Array<EnqueueOpts & { lane: JobLane; jobId: string; createdAt: number }>>();
   private running: Running | null = null;
   private concurrency: number;
   private retrySpecs = new Map<string, RetrySpec>();
@@ -78,31 +85,67 @@ export class JobRunner {
     return () => this.emitter.off('event', fn);
   }
 
+  private normalizeLane(lane?: JobLane): JobLane {
+    return lane ?? 'main';
+  }
+
+  private laneQueue(lane: JobLane) {
+    let q = this.queues.get(lane);
+    if (!q) {
+      q = [];
+      this.queues.set(lane, q);
+    }
+    return q;
+  }
+
+  private totalQueueDepth() {
+    let total = 0;
+    for (const q of this.queues.values()) total += q.length;
+    return total;
+  }
+
+  private nextLane(): JobLane | null {
+    const preferred: JobLane[] = ['main', 'review', 'subagent', 'maintenance'];
+    for (const lane of preferred) {
+      if ((this.queues.get(lane)?.length ?? 0) > 0) return lane;
+    }
+    for (const [lane, queue] of this.queues) {
+      if (queue.length > 0) return lane;
+    }
+    return null;
+  }
+
   enqueue(opts: EnqueueOpts): string {
     const jobId = crypto.randomUUID();
     const at = Date.now();
+    const lane = this.normalizeLane(opts.lane);
 
     if (opts.idempotencyKey) {
       const reserved = this.registry.reserveIdempotency(opts.idempotencyKey, jobId);
       if (!reserved.ok) return reserved.existingJobId;
     }
 
-    this.registry.apply({ type: 'job:queued', jobId, name: opts.name, at });
+      const rootJobId = opts.rootJobId ?? opts.parentJobId ?? jobId;
+    this.registry.apply({ type: 'job:queued', jobId, name: opts.name, lane, at, parentJobId: opts.parentJobId, rootJobId });
     this.registry.setOrigin(jobId, opts.origin);
     if (opts.idempotencyKey) {
       this.registry.apply({ type: 'job:idempotency', jobId, key: opts.idempotencyKey, at });
     }
-    this.emit({ type: 'job:queued', jobId, name: opts.name, at });
+    this.emit({ type: 'job:queued', jobId, name: opts.name, lane, at, parentJobId: opts.parentJobId, rootJobId });
 
-    this.queue.push({ ...opts, jobId, createdAt: at });
+    this.laneQueue(lane).push({ ...opts, lane, rootJobId, jobId, createdAt: at });
     this.metrics.totalQueued += 1;
-    if (this.queue.length > this.metrics.peakQueueDepth) this.metrics.peakQueueDepth = this.queue.length;
+    const queueDepth = this.totalQueueDepth();
+    if (queueDepth > this.metrics.peakQueueDepth) this.metrics.peakQueueDepth = queueDepth;
     this.retrySpecs.set(jobId, {
       name: opts.name,
+      lane,
       origin: { ...opts.origin },
       handler: opts.handler,
-      timeoutMs: opts.timeoutMs,
-      stallTimeoutMs: opts.stallTimeoutMs,
+        timeoutMs: opts.timeoutMs,
+        stallTimeoutMs: opts.stallTimeoutMs,
+      parentJobId: opts.parentJobId,
+      rootJobId,
     });
     void this.pump();
     return jobId;
@@ -113,10 +156,13 @@ export class JobRunner {
     if (!spec) return null;
     return this.enqueue({
       name: spec.name,
+      lane: spec.lane,
       origin: { ...spec.origin },
       handler: spec.handler,
-      timeoutMs: spec.timeoutMs,
-      stallTimeoutMs: spec.stallTimeoutMs,
+        timeoutMs: spec.timeoutMs,
+        stallTimeoutMs: spec.stallTimeoutMs,
+      parentJobId: spec.parentJobId,
+      rootJobId: spec.rootJobId,
     });
   }
 
@@ -133,7 +179,7 @@ export class JobRunner {
   }
 
   queueDepth(): number {
-    return this.queue.length;
+    return this.totalQueueDepth();
   }
 
   runningJobId(): string | null {
@@ -149,7 +195,7 @@ export class JobRunner {
       totalFailed: this.metrics.totalFailed,
       totalCanceled: this.metrics.totalCanceled,
       totalTimeout: this.metrics.totalTimeout,
-      queueDepth: this.queue.length,
+      queueDepth: this.totalQueueDepth(),
       running: Boolean(this.running),
       peakQueueDepth: this.metrics.peakQueueDepth,
       waitP95Ms: this.p95(this.metrics.waitSamples),
@@ -158,17 +204,17 @@ export class JobRunner {
   }
 
   cancel(jobId: string): boolean {
-    // cancel queued
-    const idx = this.queue.findIndex((q) => q.jobId === jobId);
-    if (idx >= 0) {
-      this.queue.splice(idx, 1);
-      const at = Date.now();
-      this.registry.apply({ type: 'job:end', jobId, state: 'canceled', at });
-      this.emit({ type: 'job:end', jobId, state: 'canceled', at });
-      return true;
+    for (const queue of this.queues.values()) {
+      const idx = queue.findIndex((q) => q.jobId === jobId);
+      if (idx >= 0) {
+        queue.splice(idx, 1);
+        const at = Date.now();
+        this.registry.apply({ type: 'job:end', jobId, state: 'canceled', at });
+        this.emit({ type: 'job:end', jobId, state: 'canceled', at });
+        return true;
+      }
     }
 
-    // cancel running
     if (this.running?.jobId === jobId) {
       this.running.abort.abort();
       return true;
@@ -181,20 +227,28 @@ export class JobRunner {
     this.emitter.emit('event', ev);
   }
 
+  updateOrigin(jobId: string, origin: JobOrigin) {
+    const at = Date.now();
+    this.registry.apply({ type: 'job:origin', jobId, origin, at });
+    this.emit({ type: 'job:origin', jobId, origin, at });
+  }
+
   private async pump() {
     if (this.running) return;
-    const next = this.queue.shift();
+    const lane = this.nextLane();
+    if (!lane) return;
+    const next = this.laneQueue(lane).shift();
     if (!next) return;
 
     const jobId = next.jobId;
     const abort = new AbortController();
     const atStart = Date.now();
 
-    this.running = { jobId, abort, lastActivityAt: atStart, startedAt: atStart };
+    this.running = { jobId, lane, abort, lastActivityAt: atStart, startedAt: atStart };
     this.metrics.totalStarted += 1;
     this.pushSample(this.metrics.waitSamples, Math.max(0, atStart - next.createdAt));
-    this.registry.apply({ type: 'job:start', jobId, at: atStart });
-    this.emit({ type: 'job:start', jobId, at: atStart });
+    this.registry.apply({ type: 'job:start', jobId, lane, at: atStart });
+    this.emit({ type: 'job:start', jobId, lane, at: atStart });
 
     let timedOut = false;
     let stalledOut = false;
@@ -203,7 +257,7 @@ export class JobRunner {
         timedOut = true;
         abort.abort();
       }, next.timeoutMs);
-      this.running.timeout = t;
+      if (this.running) this.running.timeout = t;
     }
 
     const stallTimeoutMs =
@@ -211,7 +265,7 @@ export class JobRunner {
         ? next.stallTimeoutMs
         : 1000 * 60 * 6;
     const watchdogTickMs = Math.min(30_000, Math.max(5_000, Math.floor(stallTimeoutMs / 6)));
-    this.running.stallWatchdog = setInterval(() => {
+    const watchdog = setInterval(() => {
       const current = this.running;
       if (!current || current.jobId !== jobId) return;
       const idleMs = Date.now() - current.lastActivityAt;
@@ -220,9 +274,14 @@ export class JobRunner {
         abort.abort();
       }
     }, watchdogTickMs);
+    if (this.running) this.running.stallWatchdog = watchdog;
 
     const ctx: JobRunContext = {
       jobId,
+      lane,
+      parentJobId: next.parentJobId,
+      rootJobId: next.rootJobId ?? next.parentJobId ?? jobId,
+      origin: next.origin,
       signal: abort.signal,
       progress: (message) => {
         const at = Date.now();
@@ -271,7 +330,6 @@ export class JobRunner {
       if (this.running?.timeout) clearTimeout(this.running.timeout);
       if (this.running?.stallWatchdog) clearInterval(this.running.stallWatchdog);
       this.running = null;
-      // next
       void this.pump();
     }
   }

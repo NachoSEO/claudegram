@@ -2,7 +2,7 @@
  * Custom tools for the OpenAI Agents SDK.
  *
  * Provides two tiers:
- *   - Always: fsuite CLI tools (ftree, fsearch, fcontent, fmap, fmetrics) + read_file
+ *   - Always: fsuite CLI tools (ftree, fsearch, fcontent, fmap, fread, fmetrics) + read_file
  *   - DANGEROUS_MODE only: custom function tools for shell/write/edit/patch
  *
  * Shell tool uses child_process.exec intentionally — tool input is a full shell
@@ -23,7 +23,8 @@ import { jobRunner } from '../jobs/index.js';
 import { getApprovalDecision } from '../jobs/core/approval-policy.js';
 import { config } from '../config.js';
 import { agentDeepLoopJob } from '../jobs/workers/agent-deep-loop.js';
-import { getCurrentToolChatId, getCurrentToolOrigin } from './openai-tool-context.js';
+import { delegatedSessionId } from '../discord/id-mapper.js';
+import { getCurrentToolChatId, getCurrentToolJobId, getCurrentToolOrigin } from './openai-tool-context.js';
 
 import type { Tool } from '@openai/agents-core';
 
@@ -51,13 +52,18 @@ type PatchOperationResult = {
 
 function resolveDelegateOrigin(chatId: number | undefined, origin: ReturnType<typeof getCurrentToolOrigin>): { origin?: { channelId: string; userId: string; threadId?: string }; error?: string } {
   if (origin?.channelId && origin?.userId) return { origin };
+
   if (!config.JOB_ALLOW_HEADLESS_ORIGIN) {
     return { error: 'missing discord job origin' };
   }
-  if (typeof chatId !== 'number') {
-    return { error: 'missing chat context for headless origin' };
-  }
-  const synthetic = { channelId: 'chat:' + chatId, userId: 'chat:' + chatId };
+
+  // Allow a synthetic origin fallback for delegated jobs so background tools
+  // can still run in headless or non-Discord contexts when explicitly enabled.
+  const seed = typeof chatId === 'number'
+    ? `chat:${chatId}`
+    : `headless:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+
+  const synthetic = { channelId: seed, userId: seed };
   return { origin: synthetic };
 }
 // ---------------------------------------------------------------------------
@@ -688,6 +694,10 @@ function makeIdempotencyKey(name: string, origin: { channelId: string; userId: s
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
+function createDelegatedChildChatId(parentChatId: number, task: string, model?: string | null): number {
+  return delegatedSessionId(`${parentChatId}:${model ?? 'spark'}:${task}:${crypto.randomUUID()}`);
+}
+
 function createDelegateDeepTaskTool() {
   return tool({
     name: 'delegate_deep_task',
@@ -698,24 +708,28 @@ function createDelegateDeepTaskTool() {
       model: z.string().nullable().optional().describe('Optional model override for the deep loop'),
       max_iterations: z.number().nullable().optional().describe('Optional max loop iterations (default 24)'),
     }),
-    execute: async ({ task, model, max_iterations }) => {
-      try {
-        const chatId = getCurrentToolChatId();
-        if (typeof chatId !== 'number') {
-          return '[error] delegate_deep_task unavailable: missing chat context';
-        }
+      execute: async ({ task, model, max_iterations }) => {
+        try {
+          const chatId = getCurrentToolChatId();
+          const parentJobId = getCurrentToolJobId();
+          if (typeof chatId !== 'number') {
+            return '[error] delegate_deep_task unavailable: missing chat context';
+          }
         const trimmed = task.trim();
         if (!trimmed) {
           return '[error] delegate_deep_task requires non-empty task';
         }
 
-        const handler = agentDeepLoopJob({
-          chatId,
-          task: trimmed,
-          model: model ?? undefined,
-          maxIterations:
-            typeof max_iterations === 'number'
-              ? Math.max(1, Math.min(64, Math.floor(max_iterations)))
+          const childChatId = createDelegatedChildChatId(chatId, trimmed, model ?? 'gpt-5.3-codex-spark');
+          const requestedModel = model ?? 'gpt-5.3-codex-spark';
+          const handler = agentDeepLoopJob({
+            parentChatId: chatId,
+            childChatId,
+            task: trimmed,
+            model: requestedModel,
+            maxIterations:
+              typeof max_iterations === 'number'
+                ? Math.max(1, Math.min(64, Math.floor(max_iterations)))
               : undefined,
         });
 
@@ -725,12 +739,12 @@ function createDelegateDeepTaskTool() {
         }
         const origin = originResolved.origin;
 
-        const idempotencyKey = makeIdempotencyKey('agent:autonomous-deep-loop', origin, {
-          chatId,
-          task: trimmed,
-          model: model ?? null,
-          max_iterations: max_iterations ?? null,
-        });
+          const idempotencyKey = makeIdempotencyKey('agent:autonomous-deep-loop', origin, {
+            chatId,
+            task: trimmed,
+            model: requestedModel,
+            max_iterations: max_iterations ?? null,
+          });
 
         const timeoutMs = 1000 * 60 * 30;
         const jobName = 'agent:autonomous-deep-loop';
@@ -739,20 +753,24 @@ function createDelegateDeepTaskTool() {
           return `[error] ${jobName} requires approval (${decision.reason}). Run via /devops for approval flow.`;
         }
 
-        const jobId = jobRunner.enqueue({
-          name: jobName,
-          origin,
-          handler,
-          timeoutMs,
-          idempotencyKey,
-        });
+            const jobId = jobRunner.enqueue({
+              name: jobName,
+              lane: 'subagent',
+              origin,
+              handler,
+            timeoutMs,
+            idempotencyKey,
+            parentJobId,
+          });
 
-        return JSON.stringify({
-          status: 'queued',
-          jobId,
-          chatId,
-          timeoutMinutes: 30,
-        });
+          return JSON.stringify({
+            status: 'queued',
+            jobId,
+            childChatId,
+            model: requestedModel,
+            parentJobId: parentJobId ?? null,
+            timeoutMinutes: 30,
+          });
       } catch (err) {
         return `[error] delegate_deep_task failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -783,8 +801,9 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
         const targets: Array<'committed' | 'uncommitted'> =
           selectedTarget === 'all' ? ['committed', 'uncommitted'] : [selectedTarget];
 
-        const chatId = getCurrentToolChatId();
-        const toolOriginResolved = resolveDelegateOrigin(chatId, getCurrentToolOrigin());
+          const chatId = getCurrentToolChatId();
+          const parentJobId = getCurrentToolJobId();
+          const toolOriginResolved = resolveDelegateOrigin(chatId, getCurrentToolOrigin());
         if (!toolOriginResolved.origin) {
           return '[error] delegate_coderabbit_review unavailable: ' + (toolOriginResolved.error ?? 'missing origin');
         }
@@ -803,10 +822,11 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
           if (decision.requiresApproval) {
             throw new Error(`${jobName} requires approval (${decision.reason}). Run via /devops for approval flow.`);
           }
-          return jobRunner.enqueue({
-            name: jobName,
-            origin: toolOrigin,
-            handler: async (ctx) =>
+              return jobRunner.enqueue({
+                name: jobName,
+                lane: 'review',
+                origin: toolOrigin,
+                handler: async (ctx) =>
               coderabbitReview({
                 id: ctx.jobId,
                 payload: {
@@ -817,20 +837,22 @@ function createDelegateCodeRabbitReviewTool(cwd: string) {
                 },
                 state: 'running',
                 createdAt: Date.now(),
-              } as any),
-            timeoutMs,
-            idempotencyKey,
+                } as any),
+              timeoutMs,
+              idempotencyKey,
+              parentJobId,
+            });
           });
-        });
 
         return JSON.stringify({
           status: 'queued',
           mode: 'prompt-only',
           baseRef,
-          target: selectedTarget,
-          repoPath,
-          jobIds,
-        });
+            target: selectedTarget,
+            repoPath,
+            jobIds,
+            parentJobId: parentJobId ?? null,
+          });
       } catch (err) {
         return `[error] delegate_coderabbit_review failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -847,12 +869,13 @@ function createDelegateCodexHighReviewTool() {
       task: z.string().describe('What should be reviewed or validated'),
       max_iterations: z.number().nullable().optional().describe('Optional max loop iterations (default 24)'),
     }),
-    execute: async ({ task, max_iterations }) => {
-      try {
-        const chatId = getCurrentToolChatId();
-        if (typeof chatId !== 'number') {
-          return '[error] delegate_codex_high_review unavailable: missing chat context';
-        }
+      execute: async ({ task, max_iterations }) => {
+        try {
+          const chatId = getCurrentToolChatId();
+          const parentJobId = getCurrentToolJobId();
+          if (typeof chatId !== 'number') {
+            return '[error] delegate_codex_high_review unavailable: missing chat context';
+          }
         const trimmed = task.trim();
         if (!trimmed) {
           return '[error] delegate_codex_high_review requires non-empty task';
@@ -864,11 +887,13 @@ function createDelegateCodexHighReviewTool() {
           `Task: ${trimmed}`,
         ].join('\n');
 
-        const handler = agentDeepLoopJob({
-          chatId,
-          task: reviewTask,
-          model: 'gpt-5.4',
-          maxIterations:
+          const childChatId = createDelegatedChildChatId(chatId, reviewTask, 'gpt-5.4');
+          const handler = agentDeepLoopJob({
+            parentChatId: chatId,
+            childChatId,
+            task: reviewTask,
+            model: 'gpt-5.4',
+            maxIterations:
             typeof max_iterations === 'number'
               ? Math.max(1, Math.min(64, Math.floor(max_iterations)))
               : undefined,
@@ -894,20 +919,23 @@ function createDelegateCodexHighReviewTool() {
           return `[error] ${jobName} requires approval (${decision.reason}). Run via /devops for approval flow.`;
         }
 
-        const jobId = jobRunner.enqueue({
-          name: jobName,
-          origin,
-          handler,
-          timeoutMs,
-          idempotencyKey,
-        });
+            const jobId = jobRunner.enqueue({
+              name: jobName,
+              lane: 'review',
+              origin,
+              handler,
+            timeoutMs,
+            idempotencyKey,
+            parentJobId,
+          });
 
-        return JSON.stringify({
-          status: 'queued',
-          jobId,
-          model: 'gpt-5.4',
-          chatId,
-        });
+            return JSON.stringify({
+              status: 'queued',
+              jobId,
+              childChatId,
+              model: 'gpt-5.4',
+              parentJobId: parentJobId ?? null,
+            });
       } catch (err) {
         return `[error] delegate_codex_high_review failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -979,10 +1007,10 @@ function createFsuiteOnlyTools(cwd: string) {
       },
     }),
 
-    tool({
-      name: 'fmap',
-      description:
-        'Code cartography — extract symbols (functions, classes, types, imports) from source files. ' +
+      tool({
+        name: 'fmap',
+        description:
+          'Code cartography — extract symbols (functions, classes, types, imports) from source files. ' +
         'Supports 12 languages (Python, JS, TS, Rust, Go, Java, C, C++, Ruby, Lua, PHP, Bash). ' +
         'Modes: fmap <dir> (scan all files), fmap <file> (single file), piped: fsearch -o paths "*.py" | fmap. ' +
         'Flags: -o pretty|paths|json, -t <type> (function|class|import|type|export|constant), ' +
@@ -993,14 +1021,32 @@ function createFsuiteOnlyTools(cwd: string) {
           .nullable()
           .describe('CLI arguments, e.g. "src/" or "-t function -o json" or "-L python src/"'),
       }),
-      execute: async (input) => {
-        const args = input.args ? input.args.split(/\s+/) : [];
-        return runCli('fmap', args, cwd);
-      },
-    }),
+        execute: async (input) => {
+          const args = input.args ? input.args.split(/\s+/) : [];
+          return runCli('fmap', args, cwd);
+        },
+      }),
 
-    tool({
-      name: 'fmetrics',
+      tool({
+        name: 'fread',
+        description:
+          'Budgeted file reading with line numbers, token estimates, and pipeline integration. ' +
+          'Use this as the primary file-reading tool after ftree/fsearch/fcontent/fmap identify the target. ' +
+          'Examples: "--head 80 path/to/file", "-r 120:220 path/to/file", "--around-line 150 -B 8 -A 20 path/to/file", ' +
+          '"--around pattern -B 5 -A 10 path/to/file". Supports --from-stdin with paths or unified-diff.',
+        parameters: z.object({
+          args: z
+            .string()
+            .describe('Full fread arguments, e.g. "--head 80 src/file.ts" or "-r 120:220 src/file.ts"'),
+        }),
+        execute: async (input) => {
+          const args = input.args.split(/\s+/);
+          return runCli('fread', args, cwd);
+        },
+      }),
+
+      tool({
+        name: 'fmetrics',
       description:
         'Performance telemetry and analytics for fsuite tools. ' +
         'Subcommands: stats (usage dashboard), history (recent runs), predict <path> (estimate runtimes), ' +

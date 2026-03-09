@@ -9,6 +9,7 @@ const ALL_EVENTS: DashboardEventType[] = [
   'droid:start', 'droid:stream', 'droid:complete',
   'session:create', 'session:update', 'session:clear',
   'queue:enqueue', 'queue:dequeue', 'queue:processing',
+  'job:queued', 'job:origin', 'job:idempotency', 'job:start', 'job:progress', 'job:log', 'job:result', 'job:end',
 ];
 
 let wss: WebSocketServer | null = null;
