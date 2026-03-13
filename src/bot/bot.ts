@@ -1,6 +1,7 @@
 import { Bot, type Context } from 'grammy';
 import { autoRetry } from '@grammyjs/auto-retry';
 import { sequentialize } from '@grammyjs/runner';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { config } from '../config.js';
 import { buildSessionKey } from '../utils/session-key.js';
 import { authMiddleware } from './middleware/auth.middleware.js';
@@ -70,12 +71,26 @@ function getSequentializeKey(ctx: Context): string | undefined {
 }
 
 export async function createBot(): Promise<Bot> {
+  // Support HTTP/HTTPS/SOCKS proxy for Telegram API (useful in restricted networks)
+  const proxyUrl = config.TELEGRAM_PROXY_URL
+    || process.env.HTTPS_PROXY || process.env.https_proxy
+    || process.env.HTTP_PROXY || process.env.http_proxy;
+
+  const baseFetchConfig = proxyUrl
+    ? { agent: new HttpsProxyAgent(proxyUrl) }
+    : undefined;
+
+  if (proxyUrl) {
+    console.log(`[Bot] Using proxy: ${proxyUrl}`);
+  }
+
   const bot = new Bot(config.TELEGRAM_BOT_TOKEN, {
     client: {
       // Default is 500s which causes long hangs on network interruptions.
       // 60s is enough for long polling (30s) + file uploads while recovering
       // from stuck connections much faster.
       timeoutSeconds: 60,
+      baseFetchConfig,
     },
   });
 
