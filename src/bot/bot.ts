@@ -106,11 +106,13 @@ export async function createBot(): Promise<Bot> {
   const commandList = [
     { command: 'start', description: '🚀 Show help and getting started' },
     { command: 'project', description: '📁 Set working directory' },
+    { command: 'newproject', description: '📁 Create a new project' },
     { command: 'status', description: '📊 Show current session status' },
     { command: 'clear', description: '🗑️ Clear conversation history' },
     { command: 'cancel', description: '⏹️ Cancel current request' },
     { command: 'softreset', description: '🔄 Soft reset (cancel + clear session)' },
     { command: 'resume', description: '▶️ Resume a session' },
+    { command: 'continue', description: '▶️ Continue last session' },
     { command: 'botstatus', description: '🩺 Show bot process status' },
     { command: 'restartbot', description: '🔁 Restart the bot' },
     { command: 'context', description: '🧠 Show Claude context usage' },
@@ -131,6 +133,7 @@ export async function createBot(): Promise<Bot> {
     { command: 'mode', description: '⚙️ Toggle streaming mode' },
     { command: 'terminalui', description: '🖥️ Toggle terminal-style display' },
     { command: 'tts', description: '🔊 Toggle voice replies' },
+    { command: 'ping', description: '🏓 Check if bot is responsive' },
     { command: 'commands', description: '📜 List all commands' },
   ];
 
