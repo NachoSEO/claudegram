@@ -38,6 +38,7 @@ interface StreamState {
   currentOperation: ToolOperation | null;
   backgroundTasks: Array<{ name: string; status: 'running' | 'complete' | 'error' }>;
   rateLimitedUntil: number;
+  finishing: boolean;
 }
 
 const TYPING_INTERVAL_MS = 4000; // Send typing every 4 seconds
@@ -198,6 +199,7 @@ export class MessageSender {
       currentOperation: null,
       backgroundTasks: [],
       rateLimitedUntil: 0,
+      finishing: false,
     };
 
     this.streamStates.set(sessionKey, state);
@@ -377,12 +379,13 @@ export class MessageSender {
    */
   private async flushTextStream(ctx: Context, state: StreamState): Promise<void> {
     const currentState = this.streamStates.get(state.sessionKey);
-    if (!currentState || currentState !== state || !state.messageId) return;
+    if (!currentState || currentState !== state || !state.messageId || state.finishing) return;
 
     if (Date.now() < state.rateLimitedUntil) return;
 
-    // Tool active + terminal mode: show tool status instead of text
+    // Tool active + terminal mode: advance spinner and show tool status instead of text
     if (state.currentOperation !== null && state.terminalMode) {
+      state.spinnerIndex += 1;
       await this.flushTerminalUpdate(ctx, state);
       return;
     }
@@ -449,6 +452,8 @@ export class MessageSender {
     const state = this.streamStates.get(sessionKey);
 
     if (state) {
+      // Mark as finishing first so in-flight flushTextStream calls bail out
+      state.finishing = true;
       // Stop text stream timer, typing indicator, and spinner
       if (state.textStreamInterval) {
         clearInterval(state.textStreamInterval);
