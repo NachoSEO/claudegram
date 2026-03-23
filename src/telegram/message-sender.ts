@@ -25,10 +25,13 @@ interface StreamState {
   sessionKey: string;
   messageId: number | null;
   content: string;
-  lastUpdate: number;
+  lastEditMs: number;
   updateScheduled: boolean;
   typingInterval: NodeJS.Timeout | null;
-  // Terminal UI mode additions
+  // Text streaming
+  textStreamInterval: NodeJS.Timeout | null;
+  lastEditedContent: string;
+  // Terminal UI mode
   terminalMode: boolean;
   spinnerIndex: number;
   spinnerInterval: NodeJS.Timeout | null;
@@ -38,7 +41,7 @@ interface StreamState {
 }
 
 const TYPING_INTERVAL_MS = 4000; // Send typing every 4 seconds
-const MIN_EDIT_INTERVAL_MS = 10000; // Minimum time between message edits (~5 edits/min safe zone)
+const TEXT_STREAM_INTERVAL_MS = 3000; // Interval for streaming text updates to Telegram
 
 export class MessageSender {
   private streamStates: Map<string, StreamState> = new Map();
@@ -182,9 +185,12 @@ export class MessageSender {
       sessionKey,
       messageId: message.message_id,
       content: '',
-      lastUpdate: Date.now(),
+      lastEditMs: 0,
       updateScheduled: false,
       typingInterval,
+      // Text streaming
+      textStreamInterval: null,
+      lastEditedContent: '',
       // Terminal UI mode
       terminalMode,
       spinnerIndex: 0,
@@ -195,6 +201,11 @@ export class MessageSender {
     };
 
     this.streamStates.set(sessionKey, state);
+
+    // Start periodic text streaming timer
+    state.textStreamInterval = setInterval(() => {
+      this.flushTextStream(ctx, state);
+    }, TEXT_STREAM_INTERVAL_MS);
   }
 
   private stopSpinnerAnimation(state: StreamState): void {
@@ -281,8 +292,8 @@ export class MessageSender {
     }
 
     // Throttle edits to avoid rate limits
-    const timeSinceLastUpdate = now - state.lastUpdate;
-    if (timeSinceLastUpdate < MIN_EDIT_INTERVAL_MS) {
+    const timeSinceLastUpdate = now - state.lastEditMs;
+    if (timeSinceLastUpdate < TEXT_STREAM_INTERVAL_MS) {
       return;
     }
 
@@ -324,7 +335,7 @@ export class MessageSender {
         displayContent,
         { parse_mode: undefined }
       );
-      state.lastUpdate = Date.now();
+      state.lastEditMs = Date.now();
     } catch (error: unknown) {
       if (error instanceof GrammyError && error.error_code === 429) {
         const retryAfter = error.parameters.retry_after ?? 60;
@@ -360,8 +371,65 @@ export class MessageSender {
   }
 
   /**
-   * Accumulate streamed text content internally without triggering Telegram edits.
-   * The full content is only displayed when finishStreaming() is called.
+   * Periodically flush accumulated text to Telegram as plain text.
+   * Called every TEXT_STREAM_INTERVAL_MS by the timer started in startStreaming().
+   * When a tool operation is active (terminal mode), delegates to flushTerminalUpdate().
+   */
+  private async flushTextStream(ctx: Context, state: StreamState): Promise<void> {
+    const currentState = this.streamStates.get(state.sessionKey);
+    if (!currentState || currentState !== state || !state.messageId) return;
+
+    if (Date.now() < state.rateLimitedUntil) return;
+
+    // Tool active + terminal mode: show tool status instead of text
+    if (state.currentOperation !== null && state.terminalMode) {
+      await this.flushTerminalUpdate(ctx, state);
+      return;
+    }
+
+    if (state.content === '') return;
+    if (state.content === state.lastEditedContent) return;
+
+    // Sliding window for long content
+    let displayText: string;
+    if (state.content.length <= 3500) {
+      displayText = state.content;
+    } else {
+      displayText = '...\n\n' + state.content.slice(-3500);
+    }
+
+    // Cursor indicates response is still generating
+    displayText += ' \u2589';
+
+    try {
+      await ctx.api.editMessageText(
+        state.chatId,
+        state.messageId!,
+        displayText,
+        { parse_mode: undefined }
+      );
+      state.lastEditedContent = state.content;
+      state.lastEditMs = Date.now();
+    } catch (error: unknown) {
+      if (error instanceof GrammyError && error.error_code === 429) {
+        const retryAfter = error.parameters.retry_after ?? 60;
+        state.rateLimitedUntil = Date.now() + retryAfter * 1000;
+        console.warn(`[TextStream] Rate limited, backing off for ${retryAfter}s`);
+        return;
+      }
+      if (error instanceof Error) {
+        const msg = error.message.toLowerCase();
+        if (!msg.includes('message is not modified') && !msg.includes('message_id_invalid')) {
+          console.error('[TextStream] Error editing message:', error);
+        }
+      }
+    }
+  }
+
+  /**
+   * Accumulate streamed text content. The periodic timer (flushTextStream)
+   * picks up changes and edits the Telegram message with plain text.
+   * Final formatted delivery happens in finishStreaming().
    */
   updateStream(_ctx: Context, content: string): void {
     const keyInfo = getSessionKeyFromCtx(_ctx);
@@ -381,7 +449,11 @@ export class MessageSender {
     const state = this.streamStates.get(sessionKey);
 
     if (state) {
-      // Stop typing indicator and spinner
+      // Stop text stream timer, typing indicator, and spinner
+      if (state.textStreamInterval) {
+        clearInterval(state.textStreamInterval);
+        state.textStreamInterval = null;
+      }
       this.stopTypingIndicator(state);
       this.stopSpinnerAnimation(state);
       state.currentOperation = null;
@@ -470,7 +542,11 @@ export class MessageSender {
 
     const state = this.streamStates.get(sessionKey);
     if (state) {
-      // Stop typing indicator and spinner
+      // Stop text stream timer, typing indicator, and spinner
+      if (state.textStreamInterval) {
+        clearInterval(state.textStreamInterval);
+        state.textStreamInterval = null;
+      }
       this.stopTypingIndicator(state);
       this.stopSpinnerAnimation(state);
 
