@@ -75,6 +75,11 @@ class SessionManager {
   setWorkingDirectory(sessionKey: string, directory: string): Session {
     const existing = this.sessions.get(sessionKey);
     if (existing) {
+      // Clear Claude session ID when directory changes — the Agent SDK session
+      // is bound to the original cwd and cannot be resumed with a different one.
+      if (existing.workingDirectory !== directory) {
+        existing.claudeSessionId = undefined;
+      }
       existing.workingDirectory = directory;
       existing.lastActivity = new Date();
       // Save updated session
