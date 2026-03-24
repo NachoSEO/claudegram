@@ -193,7 +193,7 @@ function truncateCommand(command: string | undefined, maxLen: number = 50): stri
 /**
  * Truncate a URL for display
  */
-function truncateUrl(url: string | undefined, maxLen: number = 40): string | undefined {
+function truncateUrl(url: string | undefined, maxLen: number = 60): string | undefined {
   if (!url) return undefined;
   if (url.length <= maxLen) return url;
   return url.substring(0, maxLen - 3) + '...';
