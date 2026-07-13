@@ -85,6 +85,7 @@ This is not a simple API wrapper. It's the real Claude Code agent with tool acce
 ### MCP Tools (Intelligent Routing)
 - Talk naturally — Claude auto-uses the right tools
 - Reddit, Medium, YouTube, project management via MCP
+- `claudegram_send_file` — Claude delivers files it creates (SVGs, reports, images) straight to your chat (workspace/`/tmp`-scoped, max 50MB)
 - No explicit commands needed for common tasks
 
 ### Forum Topic Sessions

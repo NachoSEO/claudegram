@@ -42,6 +42,7 @@ export interface McpToolsContext {
 // ── Constants ────────────────────────────────────────────────────────
 
 const REDDIT_MAX_CHARS = 50_000;
+const TELEGRAM_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB — Telegram bot upload limit
 
 // ── Factory ──────────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ function buildToolList(toolsCtx: McpToolsContext) {
   const tools: SdkMcpToolDefinition<any>[] = [
     listProjectsTool(toolsCtx),
     switchProjectTool(toolsCtx),
+    sendFileTool(toolsCtx),
   ];
 
   if (config.REDDIT_ENABLED) {
@@ -149,6 +151,85 @@ function switchProjectTool(toolsCtx: McpToolsContext) {
       } catch (error) {
         return {
           content: [{ type: 'text' as const, text: `Error switching project: ${error instanceof Error ? error.message : String(error)}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
+
+function sendFileTool(toolsCtx: McpToolsContext) {
+  return tool(
+    'claudegram_send_file',
+    'Send a file from the server to the user via Telegram. The file must be within the current working directory (workspace) or /tmp. Use this after creating files (SVGs, images, reports, etc.) to deliver them directly to the user. Maximum file size: 50MB.',
+    {
+      file_path: z.string().describe('Absolute or relative path to the file to send. Relative paths are resolved from the current working directory.'),
+      caption: z.string().optional().describe('Optional caption to display with the file in Telegram'),
+    },
+    async ({ file_path, caption }) => {
+      try {
+        const ctx = toolsCtx.telegramCtx;
+        const session = sessionManager.getSession(toolsCtx.sessionKey);
+
+        if (!session) {
+          return {
+            content: [{ type: 'text' as const, text: 'Error: No active session.' }],
+            isError: true,
+          };
+        }
+
+        // Resolve relative paths against the session working directory
+        const resolvedPath = path.isAbsolute(file_path)
+          ? file_path
+          : path.resolve(session.workingDirectory, file_path);
+
+        // Security: only allow paths inside the workspace root or /tmp —
+        // anything outside is rejected to prevent exfiltration.
+        const workspaceRoot = getWorkspaceRoot();
+        const inWorkspace = isPathWithinRoot(workspaceRoot, resolvedPath);
+        const inTmp = isPathWithinRoot('/tmp', resolvedPath);
+
+        if (!inWorkspace && !inTmp) {
+          return {
+            content: [{ type: 'text' as const, text: `Error: File path must be within the workspace (${workspaceRoot}) or /tmp. Access denied.` }],
+            isError: true,
+          };
+        }
+
+        if (!fs.existsSync(resolvedPath)) {
+          return {
+            content: [{ type: 'text' as const, text: `Error: File not found: ${path.basename(resolvedPath)}` }],
+            isError: true,
+          };
+        }
+
+        const stat = fs.statSync(resolvedPath);
+        if (stat.isDirectory()) {
+          return {
+            content: [{ type: 'text' as const, text: `Error: Path is a directory, not a file: ${path.basename(resolvedPath)}` }],
+            isError: true,
+          };
+        }
+
+        if (stat.size > TELEGRAM_MAX_FILE_SIZE) {
+          const sizeMB = (stat.size / (1024 * 1024)).toFixed(1);
+          return {
+            content: [{ type: 'text' as const, text: `Error: File too large (${sizeMB}MB). Telegram limit is 50MB.` }],
+            isError: true,
+          };
+        }
+
+        const fileName = path.basename(resolvedPath);
+        const inputFile = new InputFile(fs.readFileSync(resolvedPath), fileName);
+        await ctx.replyWithDocument(inputFile, caption ? { caption } : undefined);
+
+        const sizeMB = (stat.size / (1024 * 1024)).toFixed(2);
+        return {
+          content: [{ type: 'text' as const, text: `File sent to user: ${fileName} (${sizeMB}MB)` }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: 'text' as const, text: `Error sending file: ${error instanceof Error ? error.message : String(error)}` }],
           isError: true,
         };
       }
